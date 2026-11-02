@@ -3,7 +3,9 @@ Windows, Downloads / Videos / Desktop) or any drive's folders. Click a video to 
 (shell/vr_video.py) with its kind recognised (video/recognize.py); right click: play it as a kind you choose.
 Opened from Home - there's no dock button, so nobody sees it there.
 
-In private mode Recent stays hidden and no thumbnails are written to disk.
+Recent is off unless you turn it on (Settings > Privacy): then the first place is your folders. With it on,
+right click > Remove from Recent, or Clear Recent, takes things off it. In private mode Recent stays hidden and
+no thumbnails are written to disk.
 """
 import threading
 from pathlib import Path
@@ -49,6 +51,7 @@ class Library(Page):
     RECENT_LABEL, RECENT_ICON = "Recent", Icon.HISTORY
     RECENT_HINT = "Videos you opened lately, and the newest in Downloads, Videos and Desktop"
     RECENT_IS_PRIVATE = True       # private mode hides the first place
+    FOLDER_NAMES = ("Videos", "Vídeos", "Downloads", "Transferências", "Desktop", "Ambiente de Trabalho")
 
     def __init__(self, host):
         super().__init__(host)
@@ -57,15 +60,28 @@ class Library(Page):
         self.dirs, self.items = [], []
         self.loading = False
         self.drives = files.drives()
+        self._shown_recent = self._recent_key()
         self._load()
 
     # -- for subclasses --------------------------------------------------------------------------------
     def recent(self):
         return files.recent_videos()
 
+    def showing_recent(self):
+        return self.RECENT_IS_PRIVATE and self.host.settings().show_recent
+
+    def place_name(self):
+        """(label, icon, hint) of the first place: Recent, or your folders while Recent is off."""
+        if self.showing_recent():
+            return self.RECENT_LABEL, self.RECENT_ICON, self.RECENT_HINT
+        return "Folders", Icon.FOLDER, "Your folders - Recent is off (Settings > Privacy)"
+
     def first_place(self):
-        """(folders, files) of the first place: Recent."""
-        return [], self.recent()
+        """(folders, files) of the first place: Recent (without what you removed), or your folders."""
+        if not self.showing_recent():
+            return files.folders(self.FOLDER_NAMES), []
+        hidden = {h.lower() for h in self.host.settings().hidden_recent}
+        return [], [p for p in self.recent() if str(p).lower() not in hidden]
 
     def folder(self, path):
         return files.folder_entries(path)
@@ -74,7 +90,10 @@ class Library(Page):
         self.host.play_file(path)
 
     def menu(self, path):
-        self.host.video_file_menu(path)
+        self.host.video_file_menu(path, recent=self._in_recent())
+
+    def _in_recent(self):
+        return self.place == RECENT and self.showing_recent()
 
     def badges(self, path):
         return _kind(path)
@@ -107,6 +126,7 @@ class Library(Page):
         threading.Thread(target=read, daemon=True, name="library-list").start()
 
     def go(self, place):
+        self._shown_recent = self._recent_key()
         self.place = place
         self.dirs, self.items = [], []
         self._load()
@@ -114,7 +134,13 @@ class Library(Page):
     def _private(self):
         return self.host.settings().private_mode
 
+    def _recent_key(self):
+        s = self.host.settings()
+        return s.show_recent, len(s.hidden_recent)
+
     def state(self):
+        if self._recent_key() != self._shown_recent and self.place == RECENT:
+            self.go(RECENT)                    # Recent turned on / off, or something removed: read it again
         THUMBNAILS.private = self._private()
         return (str(self.place), self.page, self.loading, len(self.dirs), len(self.items), self._private(),
                 THUMBNAILS.version)
@@ -126,7 +152,8 @@ class Library(Page):
     def build(self):
         w, h = PAGE_WIDTH - 64, theme.ROW
         private = self._private()
-        places = [Button("place:recent", self.RECENT_LABEL, self.RECENT_ICON, h=h, style="flat", selected=self.place == RECENT,
+        label, icon, hint = self.place_name()
+        places = [Button("place:recent", label, icon, h=h, style="flat", selected=self.place == RECENT,
                          size=theme.TEXT - 4, on_click=lambda: self.go(RECENT))]
         for d in self.drives:
             here = self.place != RECENT and Path(self.place).anchor.lower() == d.lower()
@@ -136,7 +163,12 @@ class Library(Page):
                      Label(self.TITLE, size=theme.HUGE - 12, h=int(h * 1.4)), Spacer(flex=1), *places],
                     w=w, h=int(h * 1.4), gap=6)]
         if self.place == RECENT:
-            rows.append(Row([Label(self.RECENT_HINT, size=theme.SMALL - 4, color=theme.MUTED, flex=1, h=h, indent=8)],
+            clear = []
+            if self._in_recent() and self.items and not private:
+                shown = list(self.items)
+                clear = [Button("clear-recent", "Clear Recent", Icon.CLOSE, h=h - 8, style="normal",
+                                size=theme.TEXT - 6, on_click=lambda: self.host.forget_recent(shown))]
+            rows.append(Row([Label(hint, size=theme.SMALL - 4, color=theme.MUTED, flex=1, h=h, indent=8), *clear],
                             w=w, h=h))
         else:
             parent = Path(self.place).parent

@@ -80,9 +80,17 @@ class AppHost:
         """Show a picture around you (Photos: 360° / 180° / 3D pictures)."""
         self._shell.watch_photo(path)
 
-    def video_file_menu(self, path):
-        """Right click on a video file: how to play it."""
-        self._shell.video_file_menu(path)
+    def video_file_menu(self, path, recent=False):
+        """Right click on a video file: how to play it (and, in Recent, remove it from there)."""
+        self._shell.video_file_menu(path, recent)
+
+    def photo_menu(self, path, open_it, recent=False):
+        """Right click on a picture in Photos."""
+        self._shell.photo_menu(path, open_it, recent)
+
+    def forget_recent(self, paths):
+        """Take a file (or a list of them) off Recent."""
+        self._shell.forget_recent(paths)
 
     def open_file(self, path):
         """Open a file (or folder) in its Windows app; the app's window comes into VR."""
@@ -167,6 +175,7 @@ class Shell:
         self.video = None                        # ImmersiveVideo while one plays
         self.dismissed_videos = set()            # video ids whose "Watch in VR" was closed with its x
         self.dismissed_media = None              # title of the paused media whose player row was closed
+        self.played_media = set()                # titles that played during this session (paused ones stay)
         self._opened_file = None                 # a video file's VideoInfo, ready to play (from a thread)
 
     # -- lifetime --------------------------------------------------------------------------------
@@ -370,8 +379,16 @@ class Shell:
         return {h: info for h, info in self.video_detector.found.items() if info.key not in self.dismissed_videos}
 
     def _player_shown(self):
-        """The music player row, unless closed with its x (it comes back when something plays)."""
+        """The music player row: for media playing now, or played during this session and paused - not for
+        whatever Windows still remembers from before (every session starts fresh). Closed with its x: hidden
+        until something plays."""
         playing = self.media.now_playing
+        if not playing:
+            return False
+        if playing["playing"]:
+            self.played_media.add(playing["title"])
+        elif playing["title"] not in self.played_media:
+            return False
         if self.dismissed_media is None:
             return True
         if playing and (playing["playing"] or playing["title"] != self.dismissed_media):
@@ -544,7 +561,8 @@ class Shell:
     def remember_position(self, info, projection, stereo, position):
         """A video file stopped: keep where (Home's Continue watching), or forget it if it was watched to the
         end or hardly started. Nothing is kept in private mode."""
-        if self._settings.private_mode or not os.path.isfile(info.video_url or ""):
+        s = self._settings
+        if s.private_mode or not s.show_recent or not os.path.isfile(info.video_url or ""):
             return
         path, duration = info.video_url, info.duration
         watching = [w for w in self._settings.watching if os.path.normcase(w["path"]) != os.path.normcase(path)]
@@ -555,16 +573,14 @@ class Shell:
 
     def continue_watching(self):
         """[(Path, entry)] still on the PC, newest first (none in private mode)."""
-        if self._settings.private_mode:
+        s = self._settings
+        if s.private_mode or not s.show_recent:
             return []
-        return [(Path(w["path"]), w) for w in self._settings.watching if os.path.isfile(w["path"])]
+        return [(Path(w["path"]), w) for w in s.watching if os.path.isfile(w["path"])]
 
     def resume(self, entry):
         self.watch_file(Path(entry["path"]), entry.get("projection"), entry.get("stereo"),
                         max(0.0, entry["position"] - 3))   # a few seconds back: you know where you are
-
-    def forget_watching(self, entry):
-        self.store.update(watching=[w for w in self._settings.watching if w["path"] != entry["path"]])
 
     def watching_menu(self, entry):
         path = Path(entry["path"])
@@ -572,7 +588,7 @@ class Shell:
             ("Continue", Icon.PLAY, lambda: self.resume(entry), "flat"),
             ("Play from the start", Icon.PLAY,
              lambda: self.watch_file(path, entry.get("projection"), entry.get("stereo")), "flat"),
-            ("Remove from Continue watching", Icon.CLOSE, lambda: self.forget_watching(entry), "flat")])
+            ("Remove from Continue watching", Icon.CLOSE, lambda: self.forget_recent(entry["path"]), "flat")])
 
     def _pick(self, choice):
         if choice[0] == "window":
@@ -649,7 +665,24 @@ class Shell:
                  ("Close", Icon.CLOSE, lambda: self.window_action(wid, "close"), "danger")]
         self.open_menu(title, items)
 
-    def video_file_menu(self, path):
+    def forget_recent(self, paths):
+        """Off Recent and Continue watching, for good (what you remove stays removed)."""
+        paths = [str(p) for p in (paths if isinstance(paths, (list, tuple)) else [paths])]
+        gone = {p.lower() for p in paths}
+        s = self._settings
+        self.store.update(hidden_recent=s.hidden_recent + [p for p in paths if p.lower() not in
+                                                             {h.lower() for h in s.hidden_recent}],
+                          watching=[w for w in s.watching if w["path"].lower() not in gone])
+
+    def photo_menu(self, path, open_it, recent):
+        items = [("Open", Icon.PHOTO, open_it, "flat"),
+                 ("View around me", Icon.SPHERE, lambda: self.watch_photo(path), "flat")]
+        if recent:
+            items.append(("Remove from Recent", Icon.CLOSE, lambda: self.forget_recent(path), "flat"))
+        items.append(("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat"))
+        self.open_menu(shown_title(path.name, private=self._settings.private_mode), items)
+
+    def video_file_menu(self, path, recent=False):
         """A video in the Videos app: play it, or play it as a kind you choose."""
         def play(projection=None, stereo=None):
             return lambda: self.watch_file(path, projection, stereo)
@@ -661,8 +694,9 @@ class Shell:
             ("Play as 360°", Icon.PLAY, play("equi", "mono"), "flat"),
             ("Play as 360°  3D top / bottom", Icon.PLAY, play("equi", "top_bottom"), "flat"),
             ("Play as fisheye  3D side by side", Icon.PLAY, play("fisheye", "side_by_side"), "flat"),
-            ("Play on a screen (flat)", Icon.PLAY, play("screen", "mono"), "flat"),
-            ("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat")])
+            ("Play on a screen (flat)", Icon.PLAY, play("screen", "mono"), "flat")] +
+            ([("Remove from Recent", Icon.CLOSE, lambda: self.forget_recent(path), "flat")] if recent else []) +
+            [("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat")])
 
     def open_file(self, path):
         self._close_dialog()

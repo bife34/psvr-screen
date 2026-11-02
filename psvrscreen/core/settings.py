@@ -90,6 +90,12 @@ class Settings:
     lens_apart: float = 0.0     # + = the two pictures farther apart on the headset's screen
     lens_height: float = 0.0    # + = the left eye's picture higher than the right one's
     eye_test: bool = False      # show the alignment crosses (red: left eye, green: right eye)
+    # Picture (render/headset.py, renderer.py)
+    picture_quality: str = "high"        # "normal" / "high" / "max": how big each eye is drawn before the lens
+    picture_smoothing: float = 0.3       # + = smoother small text (less pixels / shimmer), - = sharper
+    # Privacy: what you opened lately
+    show_recent: bool = False            # Videos / Photos open on Recent and Home shows Continue watching
+    hidden_recent: list = field(default_factory=list)   # paths removed from Recent by you
     # Surroundings (render/environment.py): a 360° scene around you instead of the dark room
     environment: str = ""                # a scene's name ("" = the dark room)
     environment_brightness: float = 0.75 # dimmer: windows stand out more
@@ -153,6 +159,7 @@ LIMITS = {
     "video_brightness": (0.5, 1.5),
     "video_volume": (0.0, 1.5),
     "environment_brightness": (0.15, 1.3),
+    "picture_smoothing": (-0.6, 1.2),
     "environment_turn": (-180.0, 180.0),
 }
 

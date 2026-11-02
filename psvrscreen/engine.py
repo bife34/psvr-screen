@@ -22,7 +22,7 @@ from .core.log import log_error
 from .device.headset import Headset, SimulatedHeadset
 from .device.psvr import PSVRError
 from .device.tracking import q_to_matrix, yaw_pitch
-from .render.headset import HeadsetDisplay, HeadsetError
+from .render.headset import QUALITY_SCALES, HeadsetDisplay, HeadsetError
 from .render.renderer import Renderer
 from .shell.shell import Shell
 from .win import displays
@@ -164,6 +164,8 @@ class DirectEngine(threading.Thread):
 
             # Both eyes, then the lens correction
             renderer.set_environment(s.environment, s.environment_brightness, s.environment_turn)
+            renderer.smoothing = s.picture_smoothing
+            display.set_scale(QUALITY_SCALES.get(s.picture_quality, QUALITY_SCALES["normal"]))
             proj = display.projection(s.lens_fov)
             for eye, side in enumerate((-1.0, 1.0)):
                 eye_pos = head_rot @ (np.array([side * s.ipd / 2, 0.0, 0.0]) + NECK) - NECK

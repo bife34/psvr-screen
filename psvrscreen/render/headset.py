@@ -14,6 +14,7 @@ from .gl import Program
 
 EYE_W, EYE_H = 960, 1080               # each eye gets half of the 1920x1080 panel
 RENDER_SCALE = 1.4                     # render bigger than the panel, the lens correction magnifies the center
+QUALITY_SCALES = {"normal": 1.4, "high": 1.8, "max": 2.2}   # settings.picture_quality -> render scale
 # Lens values from PSVRFramework (wiki: Optical characteristics); K1, K2 and FOV are in the settings.
 CHROMA = {"x": (1.0, 1.0091, 1.0224), "y": (1.0, 1.0078, 1.0192)}
 
@@ -110,15 +111,35 @@ class HeadsetDisplay:
         glfw.swap_interval(1)
         glfw.set_input_mode(self.window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
 
-        self.eye_w, self.eye_h = int(EYE_W * RENDER_SCALE), int(EYE_H * RENDER_SCALE)
-        self._fbos, self._textures = [], []
+        self.scale = None
+        self._fbos, self._textures, self._depths = [], [], []
+        self.set_scale(RENDER_SCALE)
+        self._warp = Program(WARP_VS, WARP_FS)
+        self._empty_vao = GL.glGenVertexArrays(1)
+
+    def set_scale(self, scale):
+        """Render each eye `scale` times the panel's pixels (more = smoother edges and text after the lens
+        correction, more work for the graphics card). Cheap to call every frame."""
+        if scale == self.scale:
+            return
+        if self._fbos:
+            GL.glDeleteFramebuffers(2, self._fbos)
+            GL.glDeleteTextures(2, self._textures)
+            GL.glDeleteRenderbuffers(2, self._depths)
+        self.scale = scale
+        self.eye_w, self.eye_h = int(EYE_W * scale), int(EYE_H * scale)
+        self._fbos, self._textures, self._depths = [], [], []
         for _ in range(2):
             tex = GL.glGenTextures(1)
             GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
             GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, self.eye_w, self.eye_h, 0, GL.GL_RGBA,
                             GL.GL_UNSIGNED_BYTE, None)
-            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+            GL.glGenerateMipmap(GL.GL_TEXTURE_2D)      # the smaller levels exist from the start
+            # Mipmaps: where the lens correction shrinks the picture (bigger scales) it stays smooth, not jagged
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR_MIPMAP_LINEAR)
             GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
             depth = GL.glGenRenderbuffers(1)
             GL.glBindRenderbuffer(GL.GL_RENDERBUFFER, depth)
             GL.glRenderbufferStorage(GL.GL_RENDERBUFFER, GL.GL_DEPTH_COMPONENT24, self.eye_w, self.eye_h)
@@ -128,9 +149,8 @@ class HeadsetDisplay:
             GL.glFramebufferRenderbuffer(GL.GL_FRAMEBUFFER, GL.GL_DEPTH_ATTACHMENT, GL.GL_RENDERBUFFER, depth)
             self._fbos.append(fbo)
             self._textures.append(tex)
+            self._depths.append(depth)
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
-        self._warp = Program(WARP_VS, WARP_FS)
-        self._empty_vao = GL.glGenVertexArrays(1)
 
     @property
     def should_close(self):
@@ -172,6 +192,7 @@ class HeadsetDisplay:
             GL.glViewport(eye * fb_w // 2, 0, fb_w // 2, fb_h)
             GL.glActiveTexture(GL.GL_TEXTURE0)
             GL.glBindTexture(GL.GL_TEXTURE_2D, self._textures[eye])
+            GL.glGenerateMipmap(GL.GL_TEXTURE_2D)
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
         glfw.swap_buffers(self.window)
 

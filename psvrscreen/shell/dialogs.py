@@ -26,6 +26,14 @@ SETTINGS_SECTIONS = [
         ("slider", "lens_apart", "Eyes apart", "{:+.3f}"),
         ("slider", "lens_height", "Eye height", "{:+.3f}"),
     ]),
+    ("picture", "Picture", Icon.MONITOR, [
+        ("choice", "picture_quality", "Quality", [("normal", "Normal"), ("high", "High"), ("max", "Max")]),
+        ("note", None, "Higher draws everything bigger before the lenses: smoother edges and text, more work for "
+                       "the graphics card.", None),
+        ("slider", "picture_smoothing", "Sharp - Smooth", "{:+.1f}"),
+        ("note", None, "Smoother: windows and small text look less pixelated and shimmer less. Sharper: crisper "
+                       "but more jagged.", None),
+    ]),
     ("surroundings", "Surroundings", Icon.SPHERE, [
         ("environments", "environment", None, None),
         ("slider", "environment_brightness", "Brightness", "{:.0%}"),
@@ -50,6 +58,9 @@ SETTINGS_SECTIONS = [
         ("note", None, "Put the DS4 down for a second after turning it on: it measures itself while still.", None),
     ]),
     ("privacy", "Privacy", Icon.PRIVATE, [
+        ("toggle", "show_recent", "Show Recent and Continue watching", None),
+        ("note", None, "Off: Videos and Photos open on your folders, Home shows nothing you watched, and no "
+                       "places in videos are kept. On: right click > Remove from Recent, or Clear Recent.", None),
         ("toggle", "private_mode", "Private mode", None),
         ("note", None, "Titles become the app's name or \"Video\", the Videos app shows no Recent, and the PC "
                        "screen shows nothing about what you watch.", None),
@@ -84,7 +95,7 @@ class GlobalSettings(View):
         w = SETTINGS_WIDTH - SECTION_WIDTH
         nav = [Label("Settings", size=theme.TITLE, w=SECTION_WIDTH, h=int(theme.ROW * 1.4), indent=12)]
         for key, name, icon, _ in SETTINGS_SECTIONS:
-            nav.append(Button("section:" + key, name, icon, w=SECTION_WIDTH, h=theme.ROW + 6, size=theme.TEXT - 4,
+            nav.append(Button("section:" + key, name, icon, w=SECTION_WIDTH, h=theme.ROW - 6, size=theme.TEXT - 6,
                               style="flat", selected=key == self.section, on_click=lambda key=key: self._show(key)))
         rows = []
         for kind, key, label, fmt in next(r for k, _, _, r in SETTINGS_SECTIONS if k == self.section):

@@ -48,6 +48,9 @@ class FilesPage(PhotosPage):
     BACK_LABEL = "Back to the folder"
 
     # -- the library's choices -----------------------------------------------------------------------------
+    def place_name(self):
+        return self.RECENT_LABEL, self.RECENT_ICON, self.RECENT_HINT
+
     def first_place(self):
         return files.home_folders(), []
 

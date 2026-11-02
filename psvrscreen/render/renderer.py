@@ -26,8 +26,9 @@ TEXTURE_FS = """
 in vec2 v_uv;
 uniform sampler2D tex;
 uniform float opacity;
+uniform float smoothing;   // + = smoother (less shimmer / pixels on small text), - = sharper
 out vec4 color;
-void main() { vec4 c = texture(tex, v_uv); color = vec4(c.rgb, c.a * opacity); }
+void main() { vec4 c = texture(tex, v_uv, smoothing); color = vec4(c.rgb, c.a * opacity); }
 """
 COLOR_FS = """
 #version 330 core
@@ -62,6 +63,8 @@ class Renderer:
         self._video = VideoSphere()
         self.environment = Environment()
         self._environment_look = (1.0, 0.0)   # brightness, turn
+        self.smoothing = 0.0                  # settings.picture_smoothing
+
 
     def set_environment(self, name, brightness, turn):
         """The surroundings to show (every frame; cheap when nothing changed)."""
@@ -108,6 +111,7 @@ class Renderer:
         if s.texture is not None and s.texture.ready:
             prog = self._textured.use()
             prog.float("opacity", s.opacity)
+            prog.float("smoothing", self.smoothing)
             s.texture.bind()
         else:
             prog = self._color.use()

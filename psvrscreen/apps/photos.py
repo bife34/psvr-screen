@@ -27,6 +27,7 @@ def _kind(path, image=None):
 class PhotosPage(Library):
     TITLE, ICON, EMPTY = "Photos", Icon.PHOTO, "No pictures here"
     RECENT_HINT = "The newest pictures in Pictures, Desktop and Downloads"
+    FOLDER_NAMES = ("Pictures", "Imagens", "Desktop", "Ambiente de Trabalho", "Downloads", "Transferências")
     BACK_LABEL = "All photos"
 
     def __init__(self, host):
@@ -46,7 +47,7 @@ class PhotosPage(Library):
         self._load_big(path)
 
     def menu(self, path):
-        self.open(path)
+        self.host.photo_menu(path, lambda: self.open(path), recent=self._in_recent())
 
     def badges(self, path):
         return _kind(path)
