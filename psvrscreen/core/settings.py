@@ -93,6 +93,13 @@ class Settings:
     lens_apart: float = 0.0     # + = the two pictures farther apart on the headset's screen
     lens_height: float = 0.0    # + = the left eye's picture higher than the right one's
     eye_test: bool = False      # show the alignment crosses (red: left eye, green: right eye)
+    # Layout: "space" (windows around you), "screen" (one big desktop in front of you, like a second monitor),
+    # "screen_head" (the same, stuck to your view like the headset as a plain monitor). The dock is in all.
+    layout: str = "space"
+    # The dock (bottom bar): where it is around you - you can grab it and move it
+    dock_yaw: float = 0.0                # degrees, + = right
+    dock_pitch: float = -19.3            # degrees, - = below eye level
+    dock_distance: float = 1.2           # meters
     # Picture (render/headset.py, renderer.py)
     picture_quality: str = "high"        # "normal" / "high" / "max": how big each eye is drawn before the lens
     picture_smoothing: float = 0.3       # + = smoother small text (less pixels / shimmer), - = sharper
@@ -163,6 +170,7 @@ LIMITS = {
     "video_volume": (0.0, 1.5),
     "environment_brightness": (0.15, 1.3),
     "picture_smoothing": (-0.6, 1.2),
+    "dock_distance": (0.5, 5.0),
     "environment_turn": (-180.0, 180.0),
 }
 

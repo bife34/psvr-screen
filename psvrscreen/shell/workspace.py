@@ -139,6 +139,34 @@ class WindowMove:
         pass
 
 
+class DockMove:
+    """Moving the dock by its grip: it follows the pointer around you (always facing you); the wheel brings it
+    closer / pushes it away."""
+
+    def __init__(self, store, e):
+        self.store = store
+        s = store.get()
+        self.start = (e.yaw, e.pitch, s.dock_yaw, s.dock_pitch)
+        self.grab_distance = s.dock_distance
+
+    def drag(self, e):
+        yaw0, pitch0, dock_yaw, dock_pitch = self.start
+        self.store.update(dock_yaw=clamp_angle(dock_yaw + (e.yaw - yaw0)),
+                          dock_pitch=max(-75.0, min(75.0, dock_pitch + (e.pitch - pitch0))))
+
+    def wheel(self, e):
+        factor = 1 / WHEEL_DISTANCE_FACTOR if e.delta > 0 else WHEEL_DISTANCE_FACTOR
+        self.grab_distance = clamp("dock_distance", self.grab_distance * factor)
+        self.store.update(dock_distance=self.grab_distance)
+
+    def release(self, e):
+        pass
+
+
+def clamp_angle(degrees):
+    return (degrees + 180.0) % 360.0 - 180.0
+
+
 class WindowBend:
     """Wheel button held on a window + up / down: bends it more / flattens it."""
 

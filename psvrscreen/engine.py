@@ -187,6 +187,10 @@ class DirectEngine(threading.Thread):
                                         game_rect=windows.window_rect(windows.foreground()) if game else None)
                 if not self.simulator and displays.ensure_headset_hz():
                     self.status = "Headset had dropped to 59 Hz - set back to 90 Hz"
+                # Nothing may show on the headset's own monitor but the VR picture: a window that opened there
+                # (e.g. an app picked from the taskbar) goes to the main screen.
+                windows.rescue_windows(("headset",))
+                display.keep_on_top()
             if self.snapshot_path and t - t_snapshot >= SNAPSHOT_SECONDS:
                 t_snapshot = t
                 display.snapshot(self.snapshot_path)

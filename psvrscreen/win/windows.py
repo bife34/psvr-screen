@@ -108,6 +108,21 @@ def window_rect(hwnd):
     return r.left, r.top, r.right, r.bottom
 
 
+def move_to_monitor(hwnd, kind):
+    """Put a window on a monitor ("view2"...) filling it (maximized)."""
+    monitor = displays.find(kind)
+    if monitor is None or not is_alive(hwnd):
+        return
+    user32.ShowWindow(hwnd, SW_RESTORE)
+    # Move first, then grow: the app rescales for the monitor's text size on the way (see WindowMover)
+    user32.SetWindowPos(hwnd, None, monitor.left + 40, monitor.top + 40, 0, 0,
+                        SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE)
+    user32.ShowWindow(hwnd, SW_MAXIMIZE)
+
+
+SW_MAXIMIZE = 3
+
+
 def exe_path(hwnd):
     """Full path of the program a window belongs to ("" if unknown)."""
     return _process_exe(hwnd, full=True)

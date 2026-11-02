@@ -3,6 +3,7 @@
 Each eye is rendered bigger than its half of the panel (the lens magnifies the center), then warped with
 barrel distortion + chromatic correction into its half of the 1920x1080 panel.
 """
+import ctypes
 import math
 
 import glfw
@@ -81,6 +82,7 @@ class HeadsetDisplay:
     """simulator=True: a normal window on the main screen showing the same two-lens picture (no headset)."""
 
     def __init__(self, simulator=False):
+        self.simulator = simulator
         if not glfw.init():
             raise HeadsetError("could not start OpenGL")
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
@@ -151,6 +153,14 @@ class HeadsetDisplay:
             self._textures.append(tex)
             self._depths.append(depth)
         GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
+
+    def keep_on_top(self):
+        """The headset's picture stays above every other window (an app brought to the front, a window that
+        opened on the headset's monitor, would show flat in your eyes instead of the VR)."""
+        if self.simulator:
+            return
+        hwnd = glfw.get_win32_window(self.window)
+        ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # TOPMOST, no move/size/activate
 
     @property
     def should_close(self):

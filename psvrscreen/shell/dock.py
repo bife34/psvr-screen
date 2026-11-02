@@ -6,14 +6,23 @@ There is no Videos button: the Videos app opens from Home, so nobody sees what y
 """
 import time
 
+from ..core import geometry
+
 from .. import apps
 from ..core.settings import shown_title
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Label, Panel, Row, Spacer
+from ..ui.widgets import Button, Handle, Label, Panel, Row, Spacer
 
 DOCK_HEIGHT, DOCK_DISTANCE, DOCK_TILT = -0.42, 1.2, 28   # below eye level, leaning back to face you
+LAYOUTS = {"space": ("Space", Icon.SPHERE), "screen": ("Screen", Icon.MONITOR), "screen_head": ("Screen", Icon.MONITOR)}
+
+
+def dock_model(s):
+    """Where the dock is: around you at its yaw / pitch and distance, facing you (settings.dock_*)."""
+    return (geometry.rotate_y(-s.dock_yaw) @ geometry.rotate_x(s.dock_pitch)
+            @ geometry.translate(0, 0, -s.dock_distance))
 TAB_WIDTH = int(theme.BAR * 4.0)
 PLAYER_WIDTH = theme.BAR * 10
 
@@ -66,7 +75,12 @@ class Dock(View):
             tabs = [Label("No windows - open something from Home", size=theme.SMALL, color=theme.MUTED, h=h,
                           indent=12)]
         divider = Spacer(w=4)
-        return Panel([home, divider, *tabs, divider,
+        grip = Handle("grip", Label(Icon.GRIP, size=theme.SMALL, color=theme.MUTED, icon=True, w=int(h * 0.6), h=h,
+                                    align="center"), w=int(h * 0.6), h=h,
+                      on_press=lambda e: shell.dock_menu() if e.button == "right" else shell.grab_dock(e),
+                      on_drag=shell.gesture_drag, on_release=shell.gesture_release, on_wheel=shell.gesture_wheel)
+        layout_name, layout_icon = LAYOUTS.get(s.layout, LAYOUTS["space"])
+        return Panel([grip, home, action("layout", layout_icon, layout_name), divider, *tabs, divider,
                       action("recenter", Icon.RECENTER, "Recenter"),
                       action("global_settings", Icon.SETTINGS, "Settings"),
                       action("mouse_to_pc", Icon.MOUSE, "PC"),

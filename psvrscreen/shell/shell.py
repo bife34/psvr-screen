@@ -27,7 +27,7 @@ from ..win.media import MediaWatcher
 from . import workspace
 from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
 from .dialogs import DIALOG_DISTANCE, MENU_DISTANCE, ContextMenu, GlobalSettings, ListDialog
-from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT, Dock, Player
+from .dock import DOCK_DISTANCE, Dock, Player, dock_model
 from .home import Home
 from .motion import Motion
 from .pointer import Pointer
@@ -36,6 +36,7 @@ from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_vid
 BAR_LINGER_SECONDS = 1.5          # a window's title bar stays this long after the pointer leaves the window
 CARD_DISTANCE, CARD_SIDE_DEGREES = 1.2, 18   # settings card: near you, a little to the right of its window
 OPENED_FROM_VR_SECONDS = 6        # a new app window this soon after a click in VR was opened from VR
+SCREEN_WIDTH, SCREEN_DISTANCE = 4.0, 2.2   # the Screen layouts' desktop: about 85 degrees wide
 GAME_START_SECONDS = 180         # a game's window may take this long to appear (launchers, loading)
 CONTINUE_FROM_SECONDS = 20       # a video stopped after this and before the end is in Continue watching
 CONTINUE_UNTIL = 0.95             # (part of its length: later counts as watched)
@@ -263,9 +264,13 @@ class Shell:
             return self.video.surfaces(now) + self._menu_surfaces()
         surfaces = []
         selected = s.panels[s.selected]["id"] if s.panels else None
+        only = self._screen_panel_id(s) if s.layout != "space" else None
         for p in s.panels:
             window = self.windows.get(p["id"])
             if window is None:
+                continue
+            if only is not None and p["id"] != only:   # a Screen layout: only its desktop shows
+                window.surface = None
                 continue
             window.content.update(p, now)
             if not p.get("shown", True):
@@ -363,11 +368,11 @@ class Shell:
     def _system_ui(self):
         out = []
         self.dock.refresh()
-        dock_model = geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
-        out.append(Surface("dock", dock_model, self.dock.width, self.dock.height, texture=self.dock.texture,
+        dock_at = dock_model(self._settings)
+        out.append(Surface("dock", dock_at, self.dock.width, self.dock.height, texture=self.dock.texture,
                            layer=INTERFACE, target=self.dock, data={"ui": True}))
         if self.dialog is None:   # the player makes room for dialogs
-            model = dock_model @ geometry.translate(0, self.dock.height / 2, 0)
+            model = dock_at @ geometry.translate(0, self.dock.height / 2, 0)
             if self._player_shown():
                 self.player.refresh()
                 model = model @ geometry.translate(0, 0.02 + self.player.height / 2, 0)
@@ -484,6 +489,8 @@ class Shell:
         self.store.update(**{key: value})   # the selected window (distance moves it straight back)
 
     def show_window(self, wid):
+        if self._settings.layout != "space" and wid != self._screen_panel_id(self._settings):
+            self.set_layout("space")                 # a window from the dock: back to your windows around you
         self.store.update_window(wid, shown=True)
         self.select(wid)
 
@@ -502,6 +509,43 @@ class Shell:
                                                          self._launch, "Loading apps..."))
         elif action == "add_window":
             self._open_dialog("add", self._add_window_dialog)
+        elif action == "layout":
+            self.open_menu("Layout", [
+                ("Space - windows around you", Icon.SPHERE, lambda: self.set_layout("space"), "flat"),
+                ("Screen - one big desktop in front of you", Icon.MONITOR, lambda: self.set_layout("screen"), "flat"),
+                ("Screen that follows your head (like a plain monitor)", Icon.MONITOR,
+                 lambda: self.set_layout("screen_head"), "flat")])
+
+    # -- layouts and the dock -------------------------------------------------------------------------------
+    def screen_source(self):
+        """The desktop the Screen layouts show: the 4K screen if there is one, else a Desktop view, else the
+        main monitor."""
+        views = displays.view_kinds()
+        return "view2" if "view2" in views else (views[0] if views else "main")
+
+    def set_layout(self, layout):
+        """Space: your windows around you. Screen: only one big desktop in front of you (made if needed), apps
+        opened from VR go onto it; screen_head: it stays in front of your eyes wherever you look."""
+        if layout != "space":
+            source = self.screen_source()
+            if not any(p["source"] == source for p in self._settings.panels):
+                title = displays.view_title(source) if source != "main" else "Main monitor"
+                panel = new_panel(source, title, width=SCREEN_WIDTH, distance=SCREEN_DISTANCE, height=0.0,
+                                  curvature=0.05)
+                self.store.add_panel(panel, self.look_yaw)   # just placed: nothing else moves
+        self.store.update(layout=layout, follow_head=layout == "screen_head")
+
+    def _screen_panel_id(self, s):
+        source = self.screen_source()
+        return next((p["id"] for p in s.panels if p["source"] == source), None)
+
+    def grab_dock(self, e):
+        if e.button == "left":
+            self.gesture = workspace.DockMove(self.store, e)
+
+    def dock_menu(self):
+        self.open_menu("Bottom bar", [("Put the bar back", Icon.RECENTER, lambda: self.store.update(
+            dock_yaw=0.0, dock_pitch=-19.3, dock_distance=DOCK_DISTANCE), "flat")])
 
     def home_action(self, key):
         """A tile on Home."""
@@ -867,6 +911,9 @@ class Shell:
             for hwnd in new:
                 if hwnd not in in_vr and (launched or clicked or hwnd in on_vr):
                     title, exe = current[hwnd]
+                    if s.layout != "space" and self._game is None and self.screen_source() != "main":
+                        windows.move_to_monitor(hwnd, self.screen_source())   # Screen layout: onto its desktop
+                        continue
                     if self._game is not None and self._game_window_appeared(hwnd, title, exe):
                         continue
                     workspace.add_window(self.store, new_panel_for(hwnd, title, exe), self.look_yaw)
