@@ -1,0 +1,37 @@
+"""Keyboard shortcuts as text ("Ctrl+Alt+P") <-> what Windows' RegisterHotKey needs."""
+MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x8, 0x4000
+MODIFIERS = {"Ctrl": MOD_CONTROL, "Alt": MOD_ALT, "Shift": MOD_SHIFT, "Win": MOD_WIN}
+KEY_ORDER = ("Ctrl", "Alt", "Shift", "Win")
+
+
+def _virtual_key(name):
+    name = name.upper()
+    if len(name) == 1 and (name.isalpha() or name.isdigit()):
+        return ord(name)
+    if name.startswith("F") and name[1:].isdigit() and 1 <= int(name[1:]) <= 24:
+        return 0x70 + int(name[1:]) - 1
+    return {"SPACE": 0x20, "HOME": 0x24, "END": 0x23, "INSERT": 0x2D, "PAUSE": 0x13}.get(name)
+
+
+def parse(text):
+    """'Ctrl+Alt+P' -> (modifiers, virtual key), or None if it isn't a usable shortcut."""
+    parts = [p.strip() for p in (text or "").split("+") if p.strip()]
+    if len(parts) < 2:
+        return None   # a shortcut needs at least one modifier, or it would steal a normal key
+    mods = 0
+    for p in parts[:-1]:
+        if p.capitalize() not in MODIFIERS:
+            return None
+        mods |= MODIFIERS[p.capitalize()]
+    vk = _virtual_key(parts[-1])
+    return (mods | MOD_NOREPEAT, vk) if vk else None
+
+
+def from_tk(state, keysym):
+    """Text for a key press captured in the control panel (Tk event state + keysym), or None."""
+    if keysym in ("Control_L", "Control_R", "Alt_L", "Alt_R", "Shift_L", "Shift_R", "Win_L", "Win_R"):
+        return None   # still holding modifiers only
+    mods = [name for name, bit in (("Ctrl", 0x4), ("Alt", 0x20000), ("Shift", 0x1)) if state & bit]
+    key = keysym.upper() if len(keysym) == 1 else keysym.capitalize()
+    text = "+".join(mods + [key])
+    return text if parse(text) else None

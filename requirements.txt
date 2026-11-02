@@ -1,0 +1,9 @@
+openvr
+numpy
+mss
+glfw
+PyOpenGL
+hidapi
+pyusb
+libusb-package
+pillow

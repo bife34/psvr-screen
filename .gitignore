@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Your own data and big downloads (not code)
+settings.json
+downloads/
+tools/*.log
