@@ -1,4 +1,5 @@
-"""Gamepad (DS4 via DS4Windows, or any Xbox-style pad) as mouse + VR screen controls, using XInput.
+"""Gamepad (any Xbox-style pad, the DS4 through DS4Windows, or the DS4 read directly - ds4_motion.py - when
+there is no Xbox-style pad) as mouse + VR screen controls.
 
 Controls (DS4 names / Xbox names):
   Left stick           move the mouse
@@ -88,6 +89,7 @@ class GamepadMouse(threading.Thread):
         self.status = "No controller found"
         self._xinput = _load_xinput()
         self._stop_event = threading.Event()
+        self.motion = None        # device.ds4_motion.DS4Motion: the DS4 read directly (set by __main__)
 
     def stop(self):
         self._stop_event.set()
@@ -109,9 +111,15 @@ class GamepadMouse(threading.Thread):
             dt, last = now - last, now
             pad_index = next((i for i in range(4) if self._xinput.XInputGetState(i, ctypes.byref(state)) == 0), None)
             if pad_index is None:
-                self.status = "No controller found (connect the DS4 / start DS4Windows)"
-                prev = 0
-                continue
+                direct = self.motion.pad_state() if self.motion is not None else None
+                if direct is None:
+                    self.status = "No controller found (connect the DS4 or an Xbox controller)"
+                    prev = 0
+                    continue
+                g = state.Gamepad                         # the DS4 read directly, in the same layout
+                (g.wButtons, g.bLeftTrigger, g.bRightTrigger, g.sThumbLX, g.sThumbLY, g.sThumbRX,
+                 g.sThumbRY) = direct
+                pad_index = 0
             if getattr(self.engine, "handover", False):     # SteamVR has the headset: the pad is the game's
                 self.status = f"Controller {pad_index + 1}: in use by SteamVR"
                 prev = 0

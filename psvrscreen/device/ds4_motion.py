@@ -1,4 +1,7 @@
-"""DS4 motion: aim the VR pointer with the controller (a laser from your hand, or just the dot).
+"""The DS4, read straight from the controller (no DS4Windows needed): its motion aims the VR pointer (a laser from
+your hand, or just the dot), and its buttons and sticks are handed to gamepad.py in the Xbox layout when there
+is no Xbox-style pad (DS4Windows makes one; then that one is used and this one is left alone).
+
 
 The DS4's gyro is read straight from the controller (HID, next to DS4Windows, which keeps doing the buttons
 through XInput - see gamepad.py). Click the touchpad: the pointer comes into VR where you look, and the way the
@@ -38,6 +41,21 @@ PITCH_STEP = 0.12         # degrees: smaller changes aren't sent (no jitter, no 
 SEND_SECONDS = 0.008
 RETRY_SECONDS = 2.0
 TOUCHPAD_CLICK = 0x02
+# The DS4's buttons in the Xbox (XInput) layout gamepad.py uses
+DPAD_BITS = {0: 0x1, 1: 0x9, 2: 0x8, 3: 0xA, 4: 0x2, 5: 0x6, 6: 0x4, 7: 0x5}   # N NE E SE S SW W NW -> up/down/left/right
+FACE_BITS = ((0x20, 0x1000), (0x40, 0x2000), (0x10, 0x4000), (0x80, 0x8000))    # cross A, circle B, square X, triangle Y
+SHOULDER_BITS = ((0x01, 0x0100), (0x02, 0x0200), (0x10, 0x0020), (0x20, 0x0010), (0x40, 0x0040), (0x80, 0x0080))
+                                                       # L1 LB, R1 RB, Share BACK, Options START, L3, R3
+PAD_FRESH_SECONDS = 0.5
+
+
+def _xbox_state(data):
+    """(buttons, left trigger, right trigger, LX, LY, RX, RY) like XInput's, from a DS4 report's data."""
+    buttons = DPAD_BITS.get(data[4] & 0x0F, 0)
+    buttons |= sum(xbox for ds4, xbox in FACE_BITS if data[4] & ds4)
+    buttons |= sum(xbox for ds4, xbox in SHOULDER_BITS if data[5] & ds4)
+    stick = lambda v: max(-32767, min(32767, (v - 128) * 258))
+    return buttons, data[7], data[8], stick(data[0]), -stick(data[1]), stick(data[2]), -stick(data[3])
 
 
 def _find():
@@ -55,7 +73,13 @@ class DS4Motion(threading.Thread):
         self.status = "DS4 laser: no DS4 found (press its PS button)"
         self._stop_event = threading.Event()
         self._was_active = False
+        self._pad = (None, 0.0)                 # (Xbox-style state, when read) for gamepad.py
         self._reset()
+
+    def pad_state(self):
+        """The DS4's buttons and sticks in the Xbox layout, or None if not read lately (any thread)."""
+        state, when = self._pad
+        return state if state is not None and time.perf_counter() - when < PAD_FRESH_SECONDS else None
 
     def _reset(self):
         self._bias = None                       # calibrated rest value, None until the first still moment
@@ -87,6 +111,10 @@ class DS4Motion(threading.Thread):
         import hid
         device = hid.device()
         device.open_path(path)
+        try:
+            device.get_feature_report(0x05, 41)      # over Bluetooth: asks for the full reports (with motion)
+        except (OSError, ValueError):
+            pass
         self._reset()
         self.status = "DS4 laser: calibrating - put the DS4 down or hold it still a moment"
         try:
@@ -103,6 +131,7 @@ class DS4Motion(threading.Thread):
                     continue
                 now = time.perf_counter()
                 dt, last = min(now - last, 0.05), now
+                self._pad = (_xbox_state(data), now)
                 gyro = np.array(struct.unpack_from("<3h", data, 12), np.float64)
                 accel = np.array(struct.unpack_from("<3h", data, 18), np.float64)
                 turned += self._turn(gyro, accel, dt, now)
