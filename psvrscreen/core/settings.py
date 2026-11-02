@@ -65,6 +65,8 @@ class Settings:
     ipd: float = 0.063          # distance between your eyes, meters
     lens_k1: float = 0.22
     lens_k2: float = 0.24
+    # VR videos
+    video_screen_degrees: float = 60.0   # "screen" videos: how wide the screen looks
 
 
 # Slider limits, also used by the gamepad so both stay in range.
@@ -85,6 +87,7 @@ LIMITS = {
     "ipd": (0.055, 0.075),
     "lens_k1": (0.0, 0.6),
     "lens_k2": (0.0, 0.6),
+    "video_screen_degrees": (30.0, 100.0),
 }
 
 

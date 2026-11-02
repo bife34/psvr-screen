@@ -17,7 +17,6 @@ from OpenGL import GL
 from .gl import Mesh, Program
 
 RADIUS = 20.0                       # far enough that the eyes' few cm apart don't matter
-SCREEN_DEGREES = 90.0               # "screen": how wide the screen looks
 
 VS = """
 #version 330 core
@@ -155,7 +154,7 @@ class VideoTexture:
 
 class VideoSphere:
     """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture,
-    data = {"projection", "stereo"})."""
+    data = {"projection", "stereo", "screen_degrees"})."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -175,7 +174,7 @@ class VideoSphere:
         w, h = surface.texture.size
         stereo = surface.data.get("stereo")
         eye_aspect = (h / (w / 2)) if stereo == "side_by_side" else (h / 2 / w) if stereo == "top_bottom" else h / w
-        half_w = float(np.tan(np.radians(SCREEN_DEGREES / 2)))
+        half_w = float(np.tan(np.radians(surface.data.get("screen_degrees", 60.0) / 2)))
         prog.float("screen_half", half_w, half_w * eye_aspect)
         prog.float("opacity", surface.opacity)
         surface.texture.bind()
