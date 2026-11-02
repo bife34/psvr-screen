@@ -4,7 +4,7 @@ Your Windows PC inside the PS4 VR headset (PSVR), without SteamVR: your windows 
 surroundings, a VR video and photo player, PC games on a big screen, and a hand-over to SteamVR for real VR
 games.
 
-> **A rudimentary app, but it's working.** It was built by one person (with Claude Code) for their own PSVR.
+> **A rudimentary app, but it's working.** Made by **ALG4RVIO** (with Claude Code) for their own PSVR.
 > Feel free to improve it: fixes, ideas and pull requests are very welcome.
 
 ## What it does

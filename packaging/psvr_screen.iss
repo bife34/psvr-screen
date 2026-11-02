@@ -11,7 +11,8 @@
 AppId={{6F3B2C8A-91D4-4E7B-A5C2-2D8E4F1B7A90}
 AppName=PSVR Screen
 AppVersion={#AppVersion}
-AppPublisher=PSVR Screen (open source)
+AppPublisher=ALG4RVIO
+AppPublisherURL=https://github.com/bife34/psvr-screen
 DefaultDirName={autopf}\PSVR Screen
 DefaultGroupName=PSVR Screen
 PrivilegesRequired=admin
