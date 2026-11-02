@@ -41,8 +41,9 @@ PANEL_KEYS = ("yaw", "width", "distance", "height", "curvature", "tilt", "turn",
 # The two locks on a window's top bar: position lock freezes where it is, settings lock freezes how it looks.
 POSITION_KEYS = ("yaw", "distance", "height")
 LOOK_KEYS = ("width", "curvature", "tilt", "turn", "roll", "opacity", "text_zoom")
-# What an app's profile remembers (not where it is around you, so new windows still spread out)
-PROFILE_KEYS = LOOK_KEYS + ("distance", "height", "lock_position", "lock_look", "aspect", "pixels")
+# What an app's profile remembers (not where it is around you, so new windows still spread out; not its size
+# or shape either: an app comes into VR at the size it has in Windows)
+PROFILE_KEYS = LOOK_KEYS + ("distance", "height", "lock_position", "lock_look")
 
 
 @dataclass
