@@ -314,11 +314,13 @@ class ImmersiveVideo:
                 self.texture.upload(frame)
         s = self.shell.settings()
         front = geometry.rotate_y(-self.front_yaw)
-        turned = front @ geometry.rotate_x(s.video_tilt)
+        turned = front @ geometry.rotate_x(s.video_tilt) @ geometry.rotate_z(-s.video_roll)
         out = [Surface("video", turned, 1, 1, texture=self.texture, shape="sphere",   # centered between your eyes
                        data={"projection": self.projection, "stereo": self.stereo, "distance": s.video_distance,
                              "screen_degrees": s.video_screen_degrees, "screen_curve": s.video_screen_curve,
                              "size": s.video_size, "brightness": s.video_brightness,
+                             "contrast": s.video_contrast, "saturation": s.video_saturation,
+                             "ipd": s.video_ipd if self.stereo != "mono" else 0.0,
                              "move_away": s.video_move_away,
                              "place": (s.video_place_right, s.video_place_up, s.video_place_forward),
                              "fov": self.fov, "crop": getattr(self.player, "crop", (0.0, 0.0, 1.0, 1.0))})]
@@ -441,15 +443,21 @@ class Controls(View):
 
 
 class VideoSettings(View):
-    """⚙ of the video controls: how the video is shown. Everything except View and 3D is remembered."""
+    """⚙ of the video controls, in tabs like the VR players have them: Position (where the video is),
+    Size & 3D (what it is and how big / deep it looks), Picture. Everything except View and 3D is remembered."""
+    TABS = (("position", "Position"), ("size", "Size & 3D"), ("picture", "Picture"))
 
     def __init__(self, video):
         super().__init__(distance=DOCK_DISTANCE)
         self.video = video
+        self.tab = "position"
 
     def state(self):
         v, s = self.video, self.video.shell.settings()
-        return (v.projection, v.stereo, v.recognizing) + tuple(getattr(s, k) for k in VIDEO_DEFAULTS)
+        return (v.projection, v.stereo, v.recognizing, self.tab) + tuple(getattr(s, k) for k in VIDEO_DEFAULTS)
+
+    def _show(self, tab):
+        self.tab = tab
 
     def build(self):
         v, s = self.video, self.video.shell.settings()
@@ -476,20 +484,41 @@ class VideoSettings(View):
                           else f"{math.exp(value):.0f} m",
                           on_change=lambda value: v.set_value("video_distance", math.exp(value)))
 
-        views = [("screen", "Screen"), ("equi180", "180°"), ("equi", "360°"), ("fisheye", "Fisheye")]
-        current_view = "equi" if v.projection == "mesh" else v.projection
-        cube_only = ("screen", "equi180", "fisheye") if v.projection == "mesh" else ()   # the cube is only 360°
-        rows = [Row([Label("Video settings", size=theme.TITLE, color=theme.ACCENT, flex=1, indent=24),
+        def hint(text):
+            return Label(text, size=theme.SMALL - 6, color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24)
+
+        tabs = [Button("tab:" + key, name, h=theme.ROW - 8, size=theme.TEXT - 6, style="flat", selected=self.tab == key,
+                       on_click=lambda key=key: self._show(key)) for key, name in self.TABS]
+        rows = [Row([Label("Video", size=theme.TITLE, color=theme.ACCENT, indent=24), Spacer(flex=1), *tabs,
                      Button("reset", "Reset", h=theme.ROW - 8, style="flat", size=theme.TEXT - 6,
-                            on_click=v.reset_settings)], w=w, h=int(theme.ROW * 1.2)),
-                choices("View", views, current_view, v.set_projection, disabled=cube_only),
-                choices("3D", [("mono", "Off"), ("side_by_side", "Side by side"), ("top_bottom", "Top / bottom")],
-                        v.stereo, v.set_stereo)]
-        if v.projection == "screen":
-            rows += [slider("video_screen_degrees", "Screen size", "{:.0f}°"),
-                     slider("video_screen_curve", "Curve", "{:.0f}%", 100)]
-        else:
-            rows.append(slider("video_size", "Size", "{:.2f}x"))
+                            on_click=v.reset_settings)], w=w, h=int(theme.ROW * 1.2), gap=6)]
+
+        if self.tab == "size":
+            views = [("screen", "Screen"), ("equi180", "180°"), ("equi", "360°"), ("fisheye", "Fisheye")]
+            current_view = "equi" if v.projection == "mesh" else v.projection
+            cube_only = ("screen", "equi180", "fisheye") if v.projection == "mesh" else ()   # the cube: only 360°
+            rows += [choices("View", views, current_view, v.set_projection, disabled=cube_only),
+                     choices("3D", [("mono", "Off"), ("side_by_side", "Side by side"), ("top_bottom", "Top / bottom")],
+                             v.stereo, v.set_stereo)]
+            if v.projection == "screen":
+                rows += [slider("video_screen_degrees", "Screen size", "{:.0f}°"),
+                         slider("video_screen_curve", "Curve", "{:.0f}%", 100)]
+            else:
+                rows += [slider("video_size", "Size (zoom)", "{:.2f}x")]
+            if v.stereo != "mono":
+                rows += [slider("video_ipd", "IPD (depth)", "{:+.1f}°"),
+                         hint("IPD = how far the 3D feels:  ←  closer, bigger      farther, smaller  →")]
+            else:
+                rows.append(hint("Eye separation is for 3D videos (3D above)"))
+            return Column(rows, pad=14, bg=theme.BG, radius=28)
+
+        if self.tab == "picture":
+            rows += [slider("video_brightness", "Brightness", "{:.0f}%", 100),
+                     slider("video_contrast", "Contrast", "{:.0f}%", 100),
+                     slider("video_saturation", "Colors", "{:.0f}%", 100),
+                     slider("video_volume", "Volume", "{:.0f}%", 100)]
+            return Column(rows, pad=14, bg=theme.BG, radius=28)
+
         def move_away_slider():
             """Logarithmic too (from 0): fine steps close by, big ones far away."""
             hi = math.log1p(LIMITS["video_move_away"][1])
@@ -516,10 +545,8 @@ class VideoSettings(View):
                  Label("Distance: deeper or nearer for your eyes, same size", size=theme.SMALL - 6,
                        color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24)]
         rows += [slider("video_tilt", "Tilt (up / down)", "{:+.0f}°"),
-                 Label("Or grab empty space and drag the video; ⟳ puts its middle where you look",
-                       size=theme.SMALL - 6, color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24),
-                 slider("video_brightness", "Brightness", "{:.0f}%", 100),
-                 slider("video_volume", "Volume", "{:.0f}%", 100)]
+                 slider("video_roll", "Roll", "{:+.0f}°"),
+                 hint("Roll fixes a crooked horizon  ·  or grab empty space and drag the video")]
         return Column(rows, pad=14, bg=theme.BG, radius=28)
 
 

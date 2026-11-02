@@ -18,7 +18,9 @@ direction in the video's layout:
 The picture is a video frame (YUV planes) or a browser window's picture (BGRA, maybe with black borders
 around the video: `crop` is the part that holds it).
 
-Viewer adjustments: size (the whole video bigger / smaller around you), brightness, and "move away": the
+Viewer adjustments: size (the whole video bigger / smaller around you), eye separation (IPD: each eye's
+picture turned a little apart - the main control for how far a 3D video feels; + = farther), brightness /
+contrast / saturation, and "move away": the
 video goes away from you like a real object and gets smaller. You stay in the middle: a 180° / 360° dome
 grows around you in every direction (like a cinema whose screens all move back) while its picture keeps
 its real size on it; a screen moves straight back. "place": where you are inside the dome (parts of its
@@ -56,8 +58,17 @@ uniform int eye;          // 0 left, 1 right
 uniform float opacity;
 uniform float size;       // 180° / 360°: 1 = as filmed, 2 = twice as big
 uniform float brightness;
+uniform float contrast;
+uniform float saturation;
+uniform float separation; // radians the eyes' pictures are turned apart (+ = farther)
 out vec4 color;
 const float PI = 3.14159265;
+
+vec3 adjust(vec3 c) {
+    c = (c - 0.5) * contrast + 0.5;
+    c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, saturation);
+    return clamp(c * brightness, 0.0, 1.0);
+}
 
 vec2 rot(vec2 st, int k) { for (int i = 0; i < k; i++) st = vec2(-st.y, st.x); return st; }
 
@@ -83,6 +94,8 @@ const vec4 BLACK = vec4(0.0, 0.0, 0.0, 1.0);
 void main() {
     vec3 n = normalize(v_dir);
     vec3 d = vec3(n.x, n.y, -n.z);        // x right, y up, z = straight ahead
+    float turn = (eye == 0 ? 0.5 : -0.5) * separation;
+    d = vec3(d.x * cos(turn) + d.z * sin(turn), d.y, -d.x * sin(turn) + d.z * cos(turn));
     vec2 uv;
     float lon = atan(d.x, d.z), lat = asin(clamp(d.y, -1.0, 1.0));
     if (projection != 3) {                // size: angles shrink as the video grows
@@ -109,13 +122,13 @@ void main() {
     if (stereo == 1) uv.y = uv.y * 0.5 + 0.5 * float(eye);
     else if (stereo == 2) uv.x = uv.x * 0.5 + 0.5 * float(eye);
     uv = mix(crop.xy, crop.zw, uv);
-    if (rgb == 1) { color = vec4(clamp(texture(tex_y, uv).rgb * brightness, 0.0, 1.0), opacity); return; }
+    if (rgb == 1) { color = vec4(adjust(texture(tex_y, uv).rgb), opacity); return; }
     // BT.709, video range
     float y = (texture(tex_y, uv).r - 16.0 / 255.0) * (255.0 / 219.0);
     float cb = (texture(tex_u, uv).r - 0.5) * (255.0 / 224.0);
     float cr = (texture(tex_v, uv).r - 0.5) * (255.0 / 224.0);
     vec3 rgb = vec3(y + 1.5748 * cr, y - 0.1873 * cb - 0.4681 * cr, y + 1.8556 * cb);
-    color = vec4(clamp(rgb * brightness, 0.0, 1.0), opacity);
+    color = vec4(adjust(rgb), opacity);
 }
 """
 PROJECTIONS = {"equi": 0, "equi180": 1, "mesh": 2, "screen": 3, "fisheye": 4}
@@ -224,7 +237,8 @@ class VideoTexture:
 class VideoSphere:
     """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = where the
     video's front is, data = {"projection", "stereo", "distance", "screen_degrees", "screen_curve", "size",
-    "brightness", "move_away", "place" (right, up, forward), "fov" (fisheye, degrees), "crop"}). Screen videos
+    "brightness", "contrast", "saturation", "ipd" (degrees), "move_away", "place" (right, up, forward), "fov"
+    (fisheye, degrees), "crop"}). Screen videos
     are drawn on a panel instead of the sphere."""
 
     def __init__(self):
@@ -248,6 +262,9 @@ class VideoSphere:
         prog.float("crop", *data.get("crop", (0.0, 0.0, 1.0, 1.0)))
         prog.float("fisheye_fov", float(np.radians(data.get("fov", 190.0))))
         prog.float("brightness", data.get("brightness", 1.0))
+        prog.float("contrast", data.get("contrast", 1.0))
+        prog.float("saturation", data.get("saturation", 1.0))
+        prog.float("separation", float(np.radians(data.get("ipd", 0.0))))
         x0, y0, x1, y1 = data.get("crop", (0.0, 0.0, 1.0, 1.0))
         w, h = surface.texture.size[0] * (x1 - x0), surface.texture.size[1] * (y1 - y0)
         stereo = surface.data.get("stereo")

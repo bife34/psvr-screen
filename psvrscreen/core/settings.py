@@ -88,6 +88,10 @@ class Settings:
     video_screen_curve: float = 0.0      # "screen" videos: 0 = flat, 1 = bent around you (all of it as far)
     video_move_away: float = 0.0         # the whole video pushed this far away (m), like a real object: smaller
     video_tilt: float = 0.0              # the video turned up (+) / down (-), degrees (lying down: up)
+    video_roll: float = 0.0              # the video turned around straight ahead (a crooked horizon), degrees
+    video_ipd: float = 0.0               # 3D: degrees the eyes' pictures are turned apart (+ = farther, smaller)
+    video_contrast: float = 1.0
+    video_saturation: float = 1.0
     # Where you are inside the video's dome, as parts of its radius (0 = the middle)
     video_place_right: float = 0.0
     video_place_forward: float = 0.0
@@ -121,6 +125,10 @@ LIMITS = {
     "video_screen_curve": (0.0, 1.0),
     "video_move_away": (0.0, 300.0),
     "video_tilt": (-90.0, 90.0),
+    "video_roll": (-45.0, 45.0),
+    "video_ipd": (-10.0, 10.0),
+    "video_contrast": (0.5, 1.5),
+    "video_saturation": (0.0, 2.0),
     "video_place_right": (-0.9, 0.9),
     "video_place_forward": (-0.9, 0.9),
     "video_place_up": (-0.9, 0.9),
