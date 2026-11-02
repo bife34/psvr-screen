@@ -894,27 +894,34 @@ class Shell:
 
     # -- app windows opened from VR come into VR ----------------------------------------------------
     def _adopt_new_windows(self, s):
-        """An app window that appears shortly after a click in VR (or after launching an app from the dock)
-        becomes a VR window. Windows opened from the main screen stay on the main screen."""
+        """An app window that appears shortly after a click in VR (or after launching an app from VR) becomes a
+        VR window; a game started from VR: its own window, when it comes. Windows opened from the main screen
+        stay on the main screen (also ones Windows reopens on the VR monitor)."""
         current = {hwnd: (title, exe) for hwnd, title, exe in windows.list_open_windows()}
         now = time.monotonic()
         if self._game is not None and now - self._game[1] > GAME_START_SECONDS:
             self._game = None
-        launched = now - self._launched_at < LAUNCHED_FROM_VR_SECONDS or self._game is not None
+        launched = now - self._launched_at < LAUNCHED_FROM_VR_SECONDS
         clicked = s.auto_add_windows and self.pointer.active and now - self.last_click < OPENED_FROM_VR_SECONDS
         if self._known_windows is not None:
-            # A new window that opened on the invisible VR monitor by itself (Windows opens it where the app's
-            # last window was) can only be seen in VR: it always comes in.
+            # A new window on the invisible VR monitor (Windows opens it where the app's last window was): it
+            # comes into VR only if you opened it from VR, else it goes to the main screen where you opened it.
             new = [hwnd for hwnd in current if hwnd not in self._known_windows]
             on_vr = set(windows.windows_on(("vr",))) if new else set()
             in_vr = {getattr(w.content, "hwnd", None) for w in self.windows.values()}
             for hwnd in new:
-                if hwnd not in in_vr and (launched or clicked or hwnd in on_vr):
-                    title, exe = current[hwnd]
-                    if s.layout != "space" and self._game is None and self.screen_source() != "main":
+                if hwnd in in_vr:
+                    continue
+                title, exe = current[hwnd]
+                # A game being started: only its own window comes in by itself (not Steam or anything else)
+                if self._game is not None and self._game_window_appeared(hwnd, title, exe):
+                    continue
+                if hwnd in on_vr and not (launched or clicked):
+                    windows.to_main(hwnd)
+                    continue
+                if launched or clicked:
+                    if s.layout != "space" and self.screen_source() != "main":
                         windows.move_to_monitor(hwnd, self.screen_source())   # Screen layout: onto its desktop
-                        continue
-                    if self._game is not None and self._game_window_appeared(hwnd, title, exe):
                         continue
                     workspace.add_window(self.store, new_panel_for(hwnd, title, exe), self.look_yaw)
         self._known_windows = set(current)

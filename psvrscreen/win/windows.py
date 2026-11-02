@@ -17,6 +17,7 @@ GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 DWMWA_CLOAKED = 14
 SW_RESTORE = 9
+SW_HIDE = 0
 SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE = 0x0001, 0x0004, 0x0010
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
@@ -227,6 +228,8 @@ class WindowMover:
         # Same DPI trap as on the way in: arriving on a 100% monitor the app shrinks itself 2.25x. Move it
         # there first, then restore its size.
         user32.SetWindowPos(hwnd, None, r.left, r.top, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE)
+        if not user32.IsWindowVisible(hwnd):
+            placement.showCmd = SW_HIDE   # an app hidden in the tray (Steam) stays hidden, now on the main screen
         user32.SetWindowPlacement(hwnd, ctypes.byref(placement))
 
     def back_all(self, kinds=("vr",)):
@@ -263,12 +266,20 @@ def rescue_windows(kinds=("vr",)):
     if main is None:
         return
     for i, hwnd in enumerate(windows_on(kinds)):
-        w, h = normal_size_points(hwnd)
-        scale = (displays.get_scale(main) or 100) / 100
-        w, h = min(int(w * scale), main.width - 160), min(int(h * scale), main.height - 160)
-        x, y = main.left + 80 + i * 40, main.top + 80 + i * 40
-        if user32.IsZoomed(hwnd):
-            user32.ShowWindow(hwnd, SW_RESTORE)
-        # Move first, then size (the DPI trap, see WindowMover.to_vr_monitor).
-        user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE)
-        user32.SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
+        to_main(hwnd, i)
+
+
+def to_main(hwnd, step=0):
+    """Put a window on the main monitor at its size in points (`step` staggers several)."""
+    main = displays.find("main")
+    if main is None or not is_alive(hwnd):
+        return
+    w, h = normal_size_points(hwnd)
+    scale = (displays.get_scale(main) or 100) / 100
+    w, h = min(int(w * scale), main.width - 160), min(int(h * scale), main.height - 160)
+    x, y = main.left + 80 + step * 40, main.top + 80 + step * 40
+    if user32.IsZoomed(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+    # Move first, then size (the DPI trap, see WindowMover.to_vr_monitor).
+    user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE)
+    user32.SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)

@@ -53,6 +53,9 @@ def new_panel_for(hwnd, title, exe):
     return panel
 
 
+HIDDEN_SECONDS = 1.5
+
+
 def new_game_panel(hwnd, title, exe):
     """A game's window: a big screen in front of you, the game drawn as big as the VR monitor allows (sharp)."""
     w_pt, h_pt = windows.shown_size_points(hwnd)
@@ -93,6 +96,7 @@ class DesktopWindow(Content):
             hwnd = windows.find_window(panel["exe"], panel["title"])   # saved from last time
         self.hwnd = hwnd
         self._capture = None
+        self._hidden_since = None
         self._texture = None
         self._seq = -1
         self._placed = None            # the size we gave the real window
@@ -118,6 +122,14 @@ class DesktopWindow(Content):
         if self._capture.closed or not windows.is_alive(self.hwnd):
             self.closed = True
             return
+        # Hidden by its app (Steam goes to the tray when closed): gone from VR - it comes back on the main screen
+        if not ctypes.windll.user32.IsWindowVisible(self.hwnd):
+            self._hidden_since = self._hidden_since or now
+            if now - self._hidden_since > HIDDEN_SECONDS:
+                self.closed = True
+                return
+        else:
+            self._hidden_since = None
         self._keep_size(panel, now)
         seq, frame = self._capture.latest()
         if frame is not None and seq != self._seq:
