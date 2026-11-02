@@ -20,7 +20,7 @@ from ..scene.surface import INTERFACE, Surface
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Label, Row, SeekBar, Slider, Spacer
+from ..ui.widgets import Button, Column, Label, Row, SeekBar, Slider, Spacer, Widget
 from ..video import youtube
 from ..video.player import VideoPlayer
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT
@@ -36,6 +36,8 @@ SKIP_SECONDS = 10
 PROJECTION_NAMES = {"equi": "360°", "equi180": "180°", "mesh": "360°", "screen": "Screen"}
 STEREO_NAMES = {"mono": "2D", "top_bottom": "3D ↕", "side_by_side": "3D ↔"}
 VIDEO_DEFAULTS = {f.name: f.default for f in dataclasses.fields(Settings) if f.name.startswith("video_")}
+DOME_MAP_PX = 300                  # the dome map in the video settings
+PLACE_LIMIT = 0.9                  # you can go this far from the middle (part of the radius)
 
 
 def is_browser_video(exe, title):
@@ -154,6 +156,16 @@ class ImmersiveVideo:
         if key == "video_volume":
             self.player.volume = value
 
+    def place(self, right, forward):
+        """Move yourself to this spot of the dome map (parts of the radius)."""
+        length = math.hypot(right, forward)
+        if length > PLACE_LIMIT:   # stay inside the dome
+            right, forward = right * PLACE_LIMIT / length, forward * PLACE_LIMIT / length
+        self.shell.store.update(video_place_right=right, video_place_forward=forward)
+
+    def center_place(self):
+        self.shell.store.update(video_place_right=0.0, video_place_forward=0.0, video_place_up=0.0)
+
     def reset_settings(self):
         self.shell.store.update(**VIDEO_DEFAULTS)
         self.player.volume = VIDEO_DEFAULTS["video_volume"]
@@ -169,7 +181,8 @@ class ImmersiveVideo:
                        data={"projection": self.projection, "stereo": self.stereo, "distance": s.video_distance,
                              "screen_degrees": s.video_screen_degrees, "screen_curve": s.video_screen_curve,
                              "size": s.video_size, "brightness": s.video_brightness,
-                             "move_away": s.video_move_away})]
+                             "move_away": s.video_move_away,
+                             "place": (s.video_place_right, s.video_place_up, s.video_place_forward)})]
         if self._controls_visible(now):
             self.controls.refresh()
             model = front @ geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
@@ -279,9 +292,9 @@ class VideoSettings(View):
             return Row([Label(label, w=int(w * 0.2), indent=24), Row(buttons, gap=6, flex=1, h=theme.ROW - 8)],
                        w=w, h=theme.ROW, gap=8)
 
-        def slider(key, label, fmt, scale=1.0):
+        def slider(key, label, fmt, scale=1.0, width=None):
             lo, hi = LIMITS[key]
-            return Slider(key, label, getattr(s, key) * scale, lo * scale, hi * scale, fmt, w=w,
+            return Slider(key, label, getattr(s, key) * scale, lo * scale, hi * scale, fmt, w=width or w,
                           on_change=lambda value: v.set_value(key, value / scale))
 
         def distance_slider():
@@ -315,7 +328,18 @@ class VideoSettings(View):
                           else f"{math.expm1(value):.0f} m",
                           on_change=lambda value: v.set_value("video_move_away", math.expm1(value)))
 
-        rows += [move_away_slider(),
+        place = Row([DomeMap("dome-map", s.video_place_right, s.video_place_forward, v.place),
+                     Column([Label("Your place in the video", w=w - DOME_MAP_PX - 40, indent=24),
+                             Label("Press the map to move there (top = front)", size=theme.SMALL - 6,
+                                   color=theme.MUTED, w=w - DOME_MAP_PX - 40, h=int(theme.ROW * 0.6), indent=24),
+                             slider("video_place_up", "Height", "{:+.0%}", width=w - DOME_MAP_PX - 40),
+                             Row([Spacer(flex=1), Button("center", "Center", Icon.RECENTER, h=theme.ROW - 8,
+                                                         size=theme.TEXT - 6, on_click=v.center_place)],
+                                 w=w - DOME_MAP_PX - 40, h=theme.ROW)],
+                            w=w - DOME_MAP_PX - 20)],
+                    w=w, h=DOME_MAP_PX + 16, gap=8)
+        rows += [place,
+                 move_away_slider(),
                  Label("Move away: the screens around you go farther back - and look smaller", size=theme.SMALL - 6,
                        color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24),
                  distance_slider(),
@@ -324,3 +348,43 @@ class VideoSettings(View):
         rows += [slider("video_brightness", "Brightness", "{:.0f}%", 100),
                  slider("video_volume", "Volume", "{:.0f}%", 100)]
         return Column(rows, pad=14, bg=theme.BG, radius=28)
+
+
+class DomeMap(Widget):
+    """The dome seen from above, its front at the top, with a dot where you are. Press or drag on it to move
+    there: `on_pick(right, forward)` in parts of the dome's radius."""
+    interactive = True
+
+    def __init__(self, key, right, forward, on_pick):
+        super().__init__(DOME_MAP_PX, DOME_MAP_PX, key)
+        self.right, self.forward, self.on_pick = right, forward, on_pick
+
+    def _circle(self):
+        x0, y0, x1, y1 = self.box
+        r = min(x1 - x0, y1 - y0) / 2 - 12
+        return (x0 + x1) / 2, (y0 + y1) / 2, r
+
+    def draw(self, d, ctx):
+        cx, cy, r = self._circle()
+        hovered = ctx.hovered(self.key) or ctx.pressed(self.key)
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=theme.BUTTON, outline=theme.ACCENT if hovered else theme.TRACK,
+                  width=4)
+        d.arc((cx - r, cy - r, cx + r, cy + r), 225, 315, fill=theme.ACCENT, width=12)   # the front
+        d.text((cx, cy - r + 34), "front", font=theme.font(theme.SMALL - 8), fill=theme.ACCENT_LIGHT, anchor="mm")
+        d.line((cx - 10, cy, cx + 10, cy), fill=theme.MUTED, width=2)
+        d.line((cx, cy - 10, cx, cy + 10), fill=theme.MUTED, width=2)
+        px, py = cx + self.right * r, cy - self.forward * r
+        d.ellipse((px - 20, py - 20, px + 20, py + 20), fill=theme.FG, outline=theme.ACCENT, width=5)
+
+    def _pick(self, ctx, e):
+        if e.u is None or not self.on_pick:
+            return
+        cx, cy, r = self._circle()
+        x, y = e.u * ctx.size[0], e.v * ctx.size[1]
+        self.on_pick((x - cx) / r, (cy - y) / r)
+
+    def press(self, ctx, e):
+        self._pick(ctx, e)
+
+    def drag(self, ctx, e):
+        self._pick(ctx, e)

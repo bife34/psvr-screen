@@ -70,6 +70,10 @@ class Settings:
     video_distance: float = 10.0         # how far away the video is (m): sphere radius / screen distance
     video_screen_curve: float = 0.0      # "screen" videos: 0 = flat, 1 = bent around you (all of it as far)
     video_move_away: float = 0.0         # the whole video pushed this far away (m), like a real object: smaller
+    # Where you are inside the video's dome, as parts of its radius (0 = the middle)
+    video_place_right: float = 0.0
+    video_place_forward: float = 0.0
+    video_place_up: float = 0.0
     video_size: float = 1.0              # 180° / 360° videos: bigger / smaller around you (1 = as filmed)
     video_brightness: float = 1.0
     video_volume: float = 1.0
@@ -98,6 +102,9 @@ LIMITS = {
     "video_distance": (0.3, 300.0),
     "video_screen_curve": (0.0, 1.0),
     "video_move_away": (0.0, 300.0),
+    "video_place_right": (-0.9, 0.9),
+    "video_place_forward": (-0.9, 0.9),
+    "video_place_up": (-0.9, 0.9),
     "video_brightness": (0.5, 1.5),
     "video_volume": (0.0, 1.5),
 }
