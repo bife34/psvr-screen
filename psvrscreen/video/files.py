@@ -3,7 +3,6 @@
 Downloading is the usual way to watch videos from sites that don't let other players stream them.
 """
 import os
-import time
 from pathlib import Path
 
 from . import recognize
@@ -47,16 +46,6 @@ def list_videos():
     return videos[:MAX_FILES]
 
 
-def describe(path, size, modified):
-    """One line for the list: name · size · how old, and what the name says about it."""
-    tags = recognize.from_tags(path.stem)
-    kind = " ".join(x for x in ({"equi": "360°", "equi180": "180°", "fisheye": "Fisheye"}.get(tags.projection),
-                                {"side_by_side": "3D ↔", "top_bottom": "3D ↕"}.get(tags.stereo)) if x)
-    days = (time.time() - modified) / 86400
-    age = "today" if days < 1 else f"{int(days)} d ago"
-    return f"{path.stem}   ·   {size / 1e9:.1f} GB   ·   {age}" + (f"   ·   {kind}" if kind else "")
-
-
 def probe(path):
     """VideoInfo for a video file (always: an ordinary video plays on the screen). Reads a few frames."""
     import av
@@ -72,3 +61,84 @@ def probe(path):
     projection = layout.projection or "screen"
     return VideoInfo(str(path), path.stem, projection, stereo, video_url=str(path),
                      audio_url=str(path) if has_sound else None, duration=duration, fov=layout.fov)
+
+
+def show_in_folder(path):
+    """Open Explorer on the PC with this file selected."""
+    import subprocess
+    subprocess.Popen(["explorer", "/select,", str(path)])
+
+
+# -- browsing (the Videos app) ------------------------------------------------------------------------
+def drives():
+    """The PC's drives that are there: ["C:\\", "F:\\", ...]."""
+    try:
+        return [d for d in os.listdrives() if os.path.isdir(d)]
+    except (AttributeError, OSError):
+        return [f"{c}:\\" for c in "CDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.isdir(f"{c}:\\")]
+
+
+def folder_entries(folder):
+    """(sub-folders, video files) of a folder, both sorted by name; hidden / system folders left out."""
+    dirs, videos = [], []
+    try:
+        with os.scandir(folder) as it:
+            for entry in it:
+                try:
+                    if entry.is_dir() and not entry.name.startswith((".", "$")):
+                        dirs.append(Path(entry.path))
+                    elif entry.is_file() and Path(entry.name).suffix.lower() in EXTENSIONS:
+                        videos.append(Path(entry.path))
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    key = lambda p: p.name.lower()
+    return sorted(dirs, key=key), sorted(videos, key=key)
+
+
+def _vlc_recent():
+    """Files VLC opened lately, newest first (its own list)."""
+    from urllib.parse import unquote
+    ini = Path(os.environ.get("APPDATA", "")) / "vlc" / "vlc-qt-interface.ini"
+    try:
+        text = ini.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        if line.startswith("list=") and "file:///" in line:
+            return [Path(unquote(u.strip()[len("file:///"):])) for u in line[5:].split(",") if u.strip().startswith("file:///")]
+    return []
+
+
+def _windows_recent():
+    """Video files Windows lists as recently opened (its Recent folder's shortcuts), newest first."""
+    folder = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Recent"
+    try:
+        links = sorted((p for p in folder.glob("*.lnk") if Path(p.stem).suffix.lower() in EXTENSIONS),
+                       key=lambda p: -p.stat().st_mtime)
+    except OSError:
+        return []
+    try:
+        import comtypes
+        import comtypes.client
+        comtypes.CoInitialize()
+        shell = comtypes.client.CreateObject("WScript.Shell", dynamic=True)
+        return [Path(shell.CreateShortcut(str(link)).TargetPath) for link in links[:50]]
+    except Exception:
+        return []
+
+
+def recent_videos(limit=60):
+    """Videos you opened lately (VLC, Windows) and the newest in Downloads / Videos / Desktop."""
+    seen, out = set(), []
+    for path in _vlc_recent() + _windows_recent() + [v[0] for v in list_videos()]:
+        key = str(path).lower()
+        if key in seen or path.suffix.lower() not in EXTENSIONS:
+            continue
+        seen.add(key)
+        if path.is_file():
+            out.append(path)
+        if len(out) >= limit:
+            break
+    return out

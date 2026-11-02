@@ -13,14 +13,15 @@ import time
 from .. import apps
 from ..apps.desktop import new_panel_for
 from ..core import geometry
-from ..core.settings import new_panel
+from ..core.settings import new_panel, shown_title
 from ..scene.surface import INTERFACE, OVERLAY, Surface
-from ..win import displays, start_apps, windows
+from ..ui.theme import Icon
 from ..video import files
+from ..win import displays, start_apps, windows
 from ..win.media import MediaWatcher
 from . import workspace
 from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
-from .dialogs import DIALOG_DISTANCE, GlobalSettings, ListDialog
+from .dialogs import DIALOG_DISTANCE, MENU_DISTANCE, ContextMenu, GlobalSettings, ListDialog
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT, Dock, Player
 from .pointer import Pointer
 from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_video
@@ -53,6 +54,14 @@ class AppHost:
 
     def note_click(self):
         self._shell.last_click = time.monotonic()
+
+    def play_file(self, path):
+        """Play a video file around you (from the Videos app)."""
+        self._shell.watch_file(path)
+
+    def video_file_menu(self, path):
+        """Right click on a video file: how to play it."""
+        self._shell.video_file_menu(path)
 
 
 class _Window:
@@ -108,6 +117,8 @@ class Shell:
         self.zoomed = set()                      # window ids with the zoom lens on
         self.gesture = None                      # WindowMove / WindowBend in progress
         self.dialog = None                       # the open dialog view (one at a time)
+        self.menu = None                         # the open right-click menu, and where it is
+        self._menu_model = None
         self.dock = Dock(self)
         self.player = Player(self)
         self.start_apps = []                     # [(name, app id)] from the Start menu, loaded in the background
@@ -123,7 +134,6 @@ class Shell:
         self.video = None                        # ImmersiveVideo while one plays
         self.dismissed_videos = set()            # video ids whose "Watch in VR" was closed with its x
         self.dismissed_media = None              # title of the paused media whose player row was closed
-        self.video_files = None                  # [(label, path)] for the Videos dialog (None: still looking)
         self._opened_file = None                 # a video file's VideoInfo, ready to play (from a thread)
 
     # -- lifetime --------------------------------------------------------------------------------
@@ -181,7 +191,7 @@ class Shell:
             self.stop_video()
             self.video = ImmersiveVideo(self, info, None)
         if self.video is not None:
-            return self.video.surfaces(now)
+            return self.video.surfaces(now) + self._menu_surfaces()
         surfaces = []
         selected = s.panels[s.selected]["id"] if s.panels else None
         for p in s.panels:
@@ -207,7 +217,7 @@ class Shell:
             surfaces += self._chrome(p, window, now)
             surfaces += self._watch_button(p, window)
         surfaces += self._system_ui()
-        return surfaces
+        return surfaces + self._menu_surfaces()
 
     def _sync_windows(self, s):
         """A window for every saved panel; windows whose app is gone leave (and their panel too)."""
@@ -405,12 +415,11 @@ class Shell:
         elif action == "global_settings":
             self._open_dialog(GlobalSettings, lambda: GlobalSettings(self))
         elif action == "apps":
-            self._open_dialog("apps", lambda: ListDialog("Open an app in VR", lambda: self.start_apps, self._launch,
-                                                         "Loading apps..."))
+            native = [(f"{title}   ·   VR app", "native:" + name) for name, (title, _, _) in apps.NATIVE_APPS.items()]
+            self._open_dialog("apps", lambda: ListDialog("Open an app in VR", lambda: native + self.start_apps,
+                                                         self._launch, "Loading apps..."))
         elif action == "add_window":
             self._open_dialog("add", self._add_window_dialog)
-        elif action == "videos":
-            self._open_dialog("videos", self._videos_dialog)
 
     def _open_dialog(self, kind, make):
         opening = getattr(self.dialog, "kind", None) != kind
@@ -434,25 +443,28 @@ class Shell:
         entries.append(("Main monitor (whole screen - for videos, not for reading)", ("view", "main")))
         return ListDialog("Add a window to VR", lambda: entries, self._pick, "No other open windows")
 
-    def _videos_dialog(self):
-        """Video files in Downloads / Videos / Desktop, newest first (looked up in the background)."""
-        def find():
-            self.video_files = [(files.describe(*v), v[0]) for v in files.list_videos()]
+    def open_native(self, name):
+        """A native VR app in a new window where you look (or the one already open, shown and selected)."""
+        existing = next((p for p in self._settings.panels if p["source"] == "app:" + name), None)
+        if existing is not None:
+            self.show_window(existing["id"])
+            return
+        title = apps.NATIVE_APPS[name][0]
+        workspace.add_window(self.store, new_panel("app:" + name, title, width=2.2, distance=2.0, height=0.1),
+                             self.look_yaw)
 
-        self.video_files = None
-        threading.Thread(target=find, daemon=True, name="find-videos").start()
-        return ListDialog("Videos on this PC  (Downloads, Videos, Desktop)", lambda: self.video_files or [],
-                          self._watch_file, "Looking for videos..." if self.video_files is None
-                          else "No videos in Downloads, Videos or Desktop")
-
-    def _watch_file(self, path):
+    def watch_file(self, path, projection=None, stereo=None):
+        """Play a video file around you; projection / stereo: as you chose it (else recognised)."""
         self._close_dialog()
 
         def read():
             try:
-                self._opened_file = files.probe(path)
+                info = files.probe(path)
             except Exception:
-                pass
+                return
+            info.projection = projection or info.projection
+            info.stereo = stereo or info.stereo
+            self._opened_file = info
 
         threading.Thread(target=read, daemon=True, name="open-video").start()
 
@@ -469,17 +481,92 @@ class Shell:
 
     def _launch(self, app_id):
         self._close_dialog()
+        if app_id.startswith("native:"):
+            self.open_native(app_id[len("native:"):])
+            return
         self._launched_at = time.monotonic()   # its window comes into VR (see _adopt_new_windows)
         try:
             start_apps.launch(app_id)
         except OSError:
             pass
 
-    def _on_press(self, surface):
-        """Any press: one into a window or into empty space closes the settings cards and dialogs."""
+    def _on_press(self, surface, button="left"):
+        """Any press: one into a window or into empty space closes the settings cards and dialogs; one
+        anywhere but on the menu closes the menu. A right click into empty space while a video plays opens
+        the video's menu."""
+        if self.menu is not None and (surface is None or surface.id != "menu"):
+            self.close_menu()
         if surface is None or not surface.data.get("ui"):
             self.settings_open.clear()
             self._close_dialog()
+        if surface is None and button == "right" and self.video is not None:
+            self.video_menu()
+
+    # -- right-click menus -----------------------------------------------------------------------------
+    def open_menu(self, title, items):
+        """A menu where the pointer is. items: [(label, icon, action, style)] ("flat" or "danger")."""
+        self.close_menu()
+        self.menu = ContextMenu(title, items, self.close_menu)
+        self.menu.refresh()
+        p = self.pointer
+        spot = p.direction() * MENU_DISTANCE
+        self._menu_model = (geometry.translate(*spot) @ geometry.rotate_y(math.degrees(p.yaw))
+                            @ geometry.rotate_x(math.degrees(p.pitch))
+                            @ geometry.translate(self.menu.width / 2 + 0.01, -self.menu.height / 2 - 0.01, 0))
+
+    def close_menu(self):
+        if self.menu is not None:
+            self.menu.release()
+            self.menu = None
+
+    def _menu_surfaces(self):
+        if self.menu is None:
+            return []
+        self.menu.refresh()
+        return [Surface("menu", self._menu_model, self.menu.width, self.menu.height, texture=self.menu.texture,
+                        layer=OVERLAY, target=self.menu, data={"ui": True})]
+
+    def window_menu(self, wid):
+        p = self.panel(wid)
+        if p is None:
+            return
+        shown = p.get("shown", True)
+        title = shown_title(p["title"], p.get("exe"), self._settings.private_mode)
+        items = [("Minimize" if shown else "Show", Icon.MINIMIZE if shown else Icon.WINDOW,
+                  (lambda: self.window_action(wid, "minimize")) if shown else (lambda: self.show_window(wid)), "flat"),
+                 ("Window settings", Icon.SETTINGS, lambda: self.window_action(wid, "settings"), "flat"),
+                 ("Zoom lens", Icon.ZOOM, lambda: self.window_action(wid, "zoom"), "flat"),
+                 ("Unpin" if p.get("lock_position") else "Pin in place", Icon.PIN,
+                  lambda: self.window_action(wid, "lock_position"), "flat"),
+                 ("Unlock look" if p.get("lock_look") else "Lock look", Icon.LOCKED,
+                  lambda: self.window_action(wid, "lock_look"), "flat"),
+                 ("Close", Icon.CLOSE, lambda: self.window_action(wid, "close"), "danger")]
+        self.open_menu(title, items)
+
+    def video_file_menu(self, path):
+        """A video in the Videos app: play it, or play it as a kind you choose."""
+        def play(projection=None, stereo=None):
+            return lambda: self.watch_file(path, projection, stereo)
+
+        title = shown_title(path.name, private=self._settings.private_mode)
+        self.open_menu(title, [
+            ("Play", Icon.PLAY, play(), "flat"),
+            ("Play as 180°  3D side by side", Icon.PLAY, play("equi180", "side_by_side"), "flat"),
+            ("Play as 360°", Icon.PLAY, play("equi", "mono"), "flat"),
+            ("Play as 360°  3D top / bottom", Icon.PLAY, play("equi", "top_bottom"), "flat"),
+            ("Play as fisheye  3D side by side", Icon.PLAY, play("fisheye", "side_by_side"), "flat"),
+            ("Play on a screen (flat)", Icon.PLAY, play("screen", "mono"), "flat"),
+            ("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat")])
+
+    def video_menu(self):
+        video = self.video
+        playing = not video.player.paused
+        self.open_menu("Video", [
+            ("Pause" if playing else "Play", Icon.PAUSE if playing else Icon.PLAY, video.play_pause, "flat"),
+            ("Video settings", Icon.SETTINGS, video.toggle_settings, "flat"),
+            ("Recenter", Icon.RECENTER, self.recenter, "flat"),
+            ("Mouse → PC", Icon.MOUSE, lambda: self.dock_action("mouse_to_pc"), "flat"),
+            ("Exit video", Icon.CLOSE, self.stop_video, "danger")])
 
     def _on_shortcut(self, action):
         if action == "recenter":

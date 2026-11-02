@@ -66,6 +66,9 @@ goes back to the main screen until the next session.
 | Which YouTube videos are VR              | `video/youtube.py`            |
 | Other sites; window fallback             | `video/sites.py`, `shell/vr_video.py` (WindowPlayer) |
 | Video files on the PC                    | `video/files.py`              |
+| Videos app (library: drives, Recent)     | `apps/videos.py`              |
+| Right-click menus                        | `shell/dialogs.py` (ContextMenu), `shell/shell.py` (*_menu) |
+| Private mode (hidden titles)             | `core/settings.py` (shown_title) |
 | Decoding, sound, sync, seeking           | `video/player.py`             |
 
 ## Checking changes

@@ -40,7 +40,8 @@ class Dock(View):
             icon = Icon.MONITOR if p["source"] in ("main", "view1", "view2") else Icon.WINDOW
             tabs.append(Row([
                 Button("tab:" + wid, shown_title(p["title"], p.get("exe"), s.private_mode), icon, h=h, flex=1, size=theme.TEXT - 4, style="flat",
-                       muted=not shown, on_click=lambda wid=wid: shell.show_window(wid)),
+                       muted=not shown, on_click=lambda wid=wid: shell.show_window(wid),
+                       on_right=lambda wid=wid: shell.window_menu(wid)),
                 Button("close:" + wid, icon=Icon.CLOSE, w=int(h * 0.8), h=h, size=theme.SMALL - 6, style="danger",
                        on_click=lambda wid=wid: shell.window_action(wid, "close")),
             ], w=TAB_WIDTH, h=h, bg=theme.SELECTED if wid == selected else theme.BUTTON, radius=theme.RADIUS))

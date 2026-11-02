@@ -141,12 +141,13 @@ class Label(Widget):
 class Button(Widget):
     """Icon and/or text. style: "normal", "flat" (no background until hovered), "danger" (red on hover),
     "primary" (round, accent colored: the main action, like play). `selected` shows it as switched on /
-    current."""
+    current. `on_right`: a right click on it (usually opens a menu of options)."""
     interactive = True
 
     def __init__(self, key, text=None, icon=None, on_click=None, w=None, h=theme.ROW, style="normal",
-                 selected=False, muted=False, size=theme.TEXT, flex=0):
+                 selected=False, muted=False, size=theme.TEXT, flex=0, on_right=None):
         self.text, self.icon, self.on_click, self.style = text, icon, on_click, style
+        self.on_right = on_right
         self.selected, self.muted, self.size = selected, muted, size
         if w is None:
             w = (h if icon else 24) + (int(theme.font(size).getlength(text)) + 24 if text else 0)
@@ -183,6 +184,8 @@ class Button(Widget):
     def release(self, ctx, e, inside):
         if inside and self.on_click and e.button == "left":
             self.on_click()
+        elif inside and self.on_right and e.button == "right":
+            self.on_right()
 
 
 class Slider(Widget):

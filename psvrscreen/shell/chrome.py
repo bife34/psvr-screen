@@ -50,7 +50,8 @@ class TitleBar(View):
                      Label(shown_title(p.get("title"), p.get("exe"), self.shell.settings().private_mode), h=h, flex=1)],
                     h=h, flex=1, align="stretch")
         grip = Handle("move", title, flex=1, h=h, hover_bg=None if pos_locked else theme.HOVER,
-                      on_press=lambda e: s.grab_window(wid, e), on_drag=s.gesture_drag,
+                      on_press=lambda e: s.window_menu(wid) if e.button == "right" else s.grab_window(wid, e),
+                      on_drag=s.gesture_drag,
                       on_release=s.gesture_release, on_wheel=s.gesture_wheel)
         return Row([grip,
                     button("zoom", Icon.ZOOM, wid in s.zoomed),

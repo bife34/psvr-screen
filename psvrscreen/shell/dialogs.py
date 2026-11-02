@@ -1,5 +1,5 @@
 """Dialogs opened from the dock: settings for everything, and lists to pick from (Add window, Apps).
-They appear at eye level in front of you, closer than everything else."""
+They appear at eye level in front of you, closer than everything else. And the right-click menu."""
 from ..core.settings import LIMITS
 from ..ui import theme
 from ..ui.theme import Icon
@@ -7,6 +7,8 @@ from ..ui.view import View
 from ..ui.widgets import Button, Column, Label, Row, Slider, Spacer, Toggle
 
 DIALOG_DISTANCE = 1.0
+MENU_DISTANCE = 0.9               # the right-click menu opens this far away, where you pointed
+MENU_WIDTH = 620
 SETTINGS_WIDTH = 1100
 LIST_WIDTH = 1100
 LIST_PAGE_SIZE = 10
@@ -88,3 +90,24 @@ class ListDialog(View):
         if pages > 1:   # same height on every page
             rows.append(Spacer(h=(LIST_PAGE_SIZE - len(shown)) * (row_h - 6 + 4)))
         return Column(rows, pad=12, gap=4, bg=theme.BG, radius=theme.RADIUS, w=LIST_WIDTH + 24)
+
+
+class ContextMenu(View):
+    """Right click: the options for what you pointed at. items: [(label, icon, action, style)]; picking one
+    closes the menu, then runs it. A click anywhere else closes it."""
+
+    def __init__(self, title, items, close):
+        super().__init__(distance=MENU_DISTANCE)
+        self.title, self.items, self.close = title, items, close
+
+    def _run(self, action):
+        self.close()
+        action()
+
+    def build(self):
+        h = theme.ROW
+        rows = [Label(self.title, size=theme.SMALL, color=theme.MUTED, w=MENU_WIDTH, h=int(h * 0.8), indent=20)]
+        for i, (label, icon, action, style) in enumerate(self.items):
+            rows.append(Button(f"menu:{i}", label, icon, w=MENU_WIDTH, h=h, size=theme.TEXT - 4, style=style,
+                               on_click=lambda a=action: self._run(a)))
+        return Column(rows, pad=10, gap=2, bg=theme.BG, radius=theme.RADIUS)

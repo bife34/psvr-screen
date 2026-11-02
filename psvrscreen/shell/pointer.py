@@ -199,7 +199,7 @@ class Pointer:
                 return   # one button at a time
             surface = self.hit[0] if self.hit else None
             if self.on_press:
-                self.on_press(surface)
+                self.on_press(surface, name)
             if surface is None:
                 return
             e = self._event("press", surface, button=name, alt=alt or _key_down(VK_MENU))
