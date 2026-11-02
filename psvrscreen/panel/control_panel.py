@@ -552,9 +552,9 @@ class ControlPanel:
         in_use = {p["source"] for p in s.panels}
         for kind in displays.view_kinds():
             if kind not in in_use:
-                menu.add_command(label=f"Desktop view {kind[4:]} (a whole desktop with big text)",
+                menu.add_command(label=displays.view_description(kind),
                                  command=lambda k=kind: self._add(new_panel(
-                                     k, f"Desktop view {k[4:]}", width=3.0, distance=1.6, curvature=0.2)))
+                                     k, displays.view_title(k), **displays.view_panel_layout(k))))
         menu.add_command(label="Main monitor (whole screen - for videos)",
                          command=lambda: self._add(new_panel("main", "Main monitor")))
         menu.tk_popup(event.x_root, event.y_root)

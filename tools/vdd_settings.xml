@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <!-- PSVR Screen: one virtual "VR monitor" with its own resolution and text scaling. -->
 <vdd_settings>
   <monitors>
@@ -29,6 +29,11 @@
     <resolution>
       <width>2560</width>
       <height>1440</height>
+      <refresh_rate>60</refresh_rate>
+    </resolution>
+    <resolution>
+      <width>3840</width>
+      <height>2160</height>
       <refresh_rate>60</refresh_rate>
     </resolution>
   </resolutions>

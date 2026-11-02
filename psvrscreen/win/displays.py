@@ -50,6 +50,30 @@ class _DISPLAY_DEVICE(ctypes.Structure):
 
 
 VIEW_MODE = (1920, 1080, 175)   # extra virtual monitors ("Desktop views"): a whole desktop with big text
+# view2 is the 4K screen: a whole desktop as roomy as the main one but twice as sharp - for big screens and
+# games (needs 3840x2160 in the driver's list, tools/set_vr_monitors.ps1; until then 2560x1440)
+VIEW_MODES = {"view2": (3840, 2160, 200)}
+FALLBACK_4K = (2560, 1440, 150)
+
+
+def view_mode(kind):
+    return VIEW_MODES.get(kind, VIEW_MODE)
+
+
+def view_title(kind):
+    """What an extra virtual monitor is called."""
+    return "4K screen" if kind in VIEW_MODES else f"Desktop view {kind[4:]}"
+
+
+def view_description(kind):
+    return ("4K screen (sharp: big screens, games, videos)" if kind in VIEW_MODES
+            else f"Desktop view {kind[4:]} (a whole desktop with big text)")
+
+
+def view_panel_layout(kind):
+    """Where a new window showing this monitor goes: the 4K screen big and farther away."""
+    return (dict(width=6.0, distance=4.0, curvature=0.1) if kind in VIEW_MODES
+            else dict(width=3.0, distance=1.6, curvature=0.2))
 
 
 class Display:
@@ -165,14 +189,19 @@ def prepare_views():
     """Desktop views: their own resolution and big Windows scaling (only those monitors change)."""
     for d in list_displays():
         if d.kind.startswith("view"):
-            if (d.width, d.height) != VIEW_MODE[:2]:
+            mode = view_mode(d.kind)
+            if (d.width, d.height) != mode[:2]:
                 dm = _devmode(d.name)
-                dm.dmPelsWidth, dm.dmPelsHeight = VIEW_MODE[:2]
+                dm.dmPelsWidth, dm.dmPelsHeight = mode[:2]
                 dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT
-                _change(d.name, dm)
+                if _change(d.name, dm) != 0 and d.kind in VIEW_MODES:   # the driver doesn't offer 4K yet
+                    mode = FALLBACK_4K
+                    if (d.width, d.height) != mode[:2]:
+                        dm.dmPelsWidth, dm.dmPelsHeight = mode[:2]
+                        _change(d.name, dm)
             d = find(d.kind)
-            if d is not None and get_scale(d) != VIEW_MODE[2]:
-                set_scale(d, VIEW_MODE[2])
+            if d is not None and get_scale(d) != mode[2]:
+                set_scale(d, mode[2])
     place_vr_monitor_left_of_main()
 
 

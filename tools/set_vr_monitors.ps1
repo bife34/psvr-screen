@@ -1,4 +1,5 @@
-# Sets how many virtual VR monitors the Virtual Display Driver creates, then restarts the driver.
+# Sets how many virtual VR monitors the Virtual Display Driver creates and the resolutions they may use
+# (tools/vdd_settings.xml: up to 3840x2160 for the 4K screen), then restarts the driver.
 # Monitor 1 holds the VR windows; monitors 2+ are "Desktop views" you can place in VR.
 # Run as administrator:  set_vr_monitors.ps1 -Count 3
 param([int]$Count = 3)

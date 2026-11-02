@@ -513,7 +513,7 @@ class Shell:
         entries = [(f"{title}   ({exe})", ("window", hwnd, title, exe))
                    for hwnd, title, exe in windows.list_open_windows() if hwnd not in in_vr]
         in_use = {p["source"] for p in self._settings.panels}
-        entries += [(f"Desktop view {k[4:]} (a whole desktop with big text)", ("view", k))
+        entries += [(displays.view_description(k), ("view", k))
                     for k in displays.view_kinds() if k not in in_use]
         entries.append(("Main monitor (whole screen - for videos, not for reading)", ("view", "main")))
         return ListDialog("Add a window to VR", lambda: entries, self._pick, "No other open windows")
@@ -596,7 +596,7 @@ class Shell:
         elif choice[1] == "main":
             panel = new_panel("main", "Main monitor")
         else:
-            panel = new_panel(choice[1], f"Desktop view {choice[1][4:]}", width=3.0, distance=1.6, curvature=0.2)
+            panel = new_panel(choice[1], displays.view_title(choice[1]), **displays.view_panel_layout(choice[1]))
         workspace.add_window(self.store, panel, self.look_yaw)
         self._close_dialog()
 
