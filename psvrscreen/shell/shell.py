@@ -61,6 +61,10 @@ class AppHost:
         """Play a video file around you (from the Videos app)."""
         self._shell.watch_file(path)
 
+    def view_photo(self, path):
+        """Show a picture around you (Photos: 360° / 180° / 3D pictures)."""
+        self._shell.watch_photo(path)
+
     def video_file_menu(self, path):
         """Right click on a video file: how to play it."""
         self._shell.video_file_menu(path)
@@ -471,6 +475,17 @@ class Shell:
         title = apps.NATIVE_APPS[name][0]
         workspace.add_window(self.store, new_panel("app:" + name, title, width=2.2, distance=2.0, height=0.1),
                              self.look_yaw)
+
+    def watch_photo(self, path):
+        self._close_dialog()
+
+        def read():
+            try:
+                self._opened_file = files.probe_photo(path)
+            except Exception:
+                pass
+
+        threading.Thread(target=read, daemon=True, name="open-photo").start()
 
     def watch_file(self, path, projection=None, stereo=None):
         """Play a video file around you; projection / stereo: as you chose it (else recognised)."""

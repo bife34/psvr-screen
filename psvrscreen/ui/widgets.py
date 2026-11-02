@@ -369,11 +369,12 @@ def _rounded(image, size, radius):
 
 
 class Picture(Widget):
-    """A picture (PIL image, or None while it loads: a calm placeholder with an icon) with round corners."""
+    """A picture (PIL image, or None while it loads: a calm placeholder with an icon) with round corners.
+    fit: show it whole (bars around it) instead of filling the box."""
 
-    def __init__(self, image, w, h, radius=theme.RADIUS_CARD, icon=None):
-        super().__init__(w, h)
-        self.image, self.radius, self.icon = image, radius, icon
+    def __init__(self, image, w, h, radius=theme.RADIUS_CARD, icon=None, fit=False, flex=0):
+        super().__init__(w, h, flex=flex)
+        self.image, self.radius, self.icon, self.fit = image, radius, icon, fit
 
     def draw(self, d, ctx):
         x0, y0, x1, y1 = (int(v) for v in self.box)
@@ -383,6 +384,11 @@ class Picture(Widget):
                 d.text(((x0 + x1) / 2, (y0 + y1) / 2), self.icon, font=theme.font(int((y1 - y0) * 0.3), True),
                        fill=theme.DISABLED, anchor="mm")
             return
+        if self.fit:
+            k = min((x1 - x0) / self.image.width, (y1 - y0) / self.image.height)
+            w, h = max(1, int(self.image.width * k)), max(1, int(self.image.height * k))
+            x0, y0 = x0 + (x1 - x0 - w) // 2, y0 + (y1 - y0 - h) // 2
+            x1, y1 = x0 + w, y0 + h
         picture = _rounded(self.image, (x1 - x0, y1 - y0), self.radius)
         ctx.canvas.alpha_composite(picture, (x0, y0))
 

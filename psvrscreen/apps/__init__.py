@@ -6,11 +6,13 @@ To add a native app: write apps/<name>.py with a Content subclass and register i
 """
 from .desktop import DesktopWindow
 from .monitor import MonitorView
+from .photos import PhotosApp
 from .videos import VideosApp
 from ..ui.theme import Icon
 
 NATIVE_APPS = {   # name -> (title, icon, Content class)
     "videos": ("Videos", Icon.VIDEO, VideosApp),
+    "photos": ("Photos", Icon.PHOTO, PhotosApp),
 }
 
 

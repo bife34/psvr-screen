@@ -191,16 +191,57 @@ class WindowPlayer:
         self._capture.stop()
 
 
+class PhotoPlayer:
+    """A picture shown around you (from Photos): one frame, nothing to play."""
+    duration, position, ended, error, paused, volume = 0.0, 0.0, False, None, True, 1.0
+
+    def __init__(self, path):
+        self._image, self._sent = None, False
+        threading.Thread(target=self._load, args=(path,), daemon=True, name="photo").start()
+
+    def _load(self, path):
+        from PIL import Image
+        try:
+            with Image.open(path) as image:
+                image.draft("RGB", (8192, 8192))
+                rgba = np.asarray(image.convert("RGBA"))
+            self._image = np.ascontiguousarray(rgba[..., [2, 1, 0, 3]])   # BGRA, like a window's picture
+        except Exception as e:
+            self.error = str(e)[:80]
+
+    @property
+    def buffering(self):
+        return self._image is None and self.error is None
+
+    def frame(self):
+        if self._image is None or self._sent:
+            return None
+        self._sent = True
+        return self._image
+
+    def set_paused(self, paused):
+        pass
+
+    def seek(self, seconds):
+        pass
+
+    def close(self):
+        self._image = None
+
+
 class ImmersiveVideo:
     def __init__(self, shell, info, hwnd):
         self.shell, self.info = shell, info
+        self.photo = info.source == "photo"
         self.window = info.source == "window"
         self.projection = info.projection or "screen"   # unknown (a window): recognised from its picture
         self.stereo = info.stereo or "mono"
         self.fov = info.fov
         self.recognizing = self.window and (info.projection is None or info.stereo is None)
         self.front_yaw = shell.look_yaw          # the video's front is where you looked when it started
-        if self.window:
+        if self.photo:
+            self.player = PhotoPlayer(info.video_url)
+        elif self.window:
             self.player = WindowPlayer(hwnd, shell.media)
         else:
             self.player = VideoPlayer(info.video_url, info.audio_url, info.duration, headers=info.headers)
@@ -308,7 +349,7 @@ class ImmersiveVideo:
     def surfaces(self, now):
         frame = self.player.frame()
         if frame is not None:
-            if self.window:
+            if self.window or self.photo:
                 self.texture.upload_bgra(frame)
             else:
                 self.texture.upload(frame)
@@ -409,7 +450,10 @@ class Controls(View):
             return Button(key, text, icon, h=h, w=w, style=style, selected=selected, size=theme.TEXT - 4,
                           on_click=action)
 
-        if v.window:   # the browser plays it: jump around there
+        if v.photo:
+            progress = Label("Photo  ·  drag empty space to look around it", size=theme.SMALL - 4, color=theme.MUTED,
+                             w=CONTROLS_WIDTH, h=theme.ROW, align="center")
+        elif v.window:   # the browser plays it: jump around there
             progress = Label("From the browser window - put the video in full screen there for the best picture",
                              size=theme.SMALL - 4, color=theme.MUTED, w=CONTROLS_WIDTH, h=theme.ROW, align="center")
         else:
@@ -426,7 +470,9 @@ class Controls(View):
                               indent=16)], w=SIDE_WIDTH, h=h)
         play = Button("play", icon=Icon.PAUSE if playing else Icon.PLAY, w=h + 14, h=h + 14, style="primary",
                       size=theme.TEXT, on_click=v.play_pause)
-        if v.window:
+        if v.photo:
+            center = Spacer(w=h)
+        elif v.window:
             center = Row([play], h=h + 14)
         else:
             center = Row([button("back", f"−{SKIP_SECONDS}s", action=lambda: v.skip(-SKIP_SECONDS), w=150), play,

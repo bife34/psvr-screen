@@ -9,33 +9,34 @@ from . import recognize
 from .info import VideoInfo, look_at_frames
 
 EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi"}
+PICTURE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 SEARCH_DEPTH = 2                 # folders inside the searched folders that are looked into
 MAX_FILES = 300
 
 
-def folders():
+def folders(names=("Downloads", "Videos", "Desktop", "Transferências", "Vídeos", "Ambiente de Trabalho")):
     """Where downloaded videos usually are: Downloads, Videos, Desktop (also the OneDrive ones)."""
     home = Path.home()
     found = []
     for base in (home, home / "OneDrive"):
-        for name in ("Downloads", "Videos", "Desktop", "Transferências", "Vídeos", "Ambiente de Trabalho"):
+        for name in names:
             path = base / name
             if path.is_dir() and path.resolve() not in [p.resolve() for p in found]:
                 found.append(path)
     return found
 
 
-def list_videos():
-    """[(path, size in bytes, modified time)] of the video files found, newest first."""
+def list_videos(extensions=EXTENSIONS, roots=None):
+    """[(path, size in bytes, modified time)] of the video files (or `extensions`) found, newest first."""
     videos = []
-    for root in folders():
+    for root in roots or folders():
         root_depth = len(root.parts)
         for dirpath, dirnames, filenames in os.walk(root):
             if len(Path(dirpath).parts) - root_depth >= SEARCH_DEPTH:
                 dirnames[:] = []
             dirnames[:] = [d for d in dirnames if not d.startswith((".", "$"))]
             for name in filenames:
-                if Path(name).suffix.lower() in EXTENSIONS:
+                if Path(name).suffix.lower() in extensions:
                     path = Path(dirpath) / name
                     try:
                         stat = path.stat()
@@ -78,8 +79,9 @@ def drives():
         return [f"{c}:\\" for c in "CDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.isdir(f"{c}:\\")]
 
 
-def folder_entries(folder):
-    """(sub-folders, video files) of a folder, both sorted by name; hidden / system folders left out."""
+def folder_entries(folder, extensions=EXTENSIONS):
+    """(sub-folders, video files - or `extensions`) of a folder, both sorted by name; hidden / system folders
+    left out."""
     dirs, videos = [], []
     try:
         with os.scandir(folder) as it:
@@ -87,7 +89,7 @@ def folder_entries(folder):
                 try:
                     if entry.is_dir() and not entry.name.startswith((".", "$")):
                         dirs.append(Path(entry.path))
-                    elif entry.is_file() and Path(entry.name).suffix.lower() in EXTENSIONS:
+                    elif entry.is_file() and Path(entry.name).suffix.lower() in extensions:
                         videos.append(Path(entry.path))
                 except OSError:
                     continue
@@ -142,3 +144,24 @@ def recent_videos(limit=60):
         if len(out) >= limit:
             break
     return out
+
+
+def recent_photos(limit=60):
+    """The newest pictures in Pictures, Desktop and Downloads."""
+    roots = folders(("Pictures", "Imagens", "Desktop", "Ambiente de Trabalho", "Downloads", "Transferências"))
+    return [v[0] for v in list_videos(PICTURE_EXTENSIONS, roots)[:limit]]
+
+
+def probe_photo(path):
+    """VideoInfo for a picture shown around you: 360° if twice as wide as tall, 3D if its halves match."""
+    import numpy as np
+    from PIL import Image
+    with Image.open(path) as image:
+        image.draft("L", (2048, 2048))
+        gray = np.asarray(image.convert("L"), dtype=np.float32)
+    tags = recognize.from_tags(path.stem)
+    stereo = tags.stereo or recognize.stereo_of(recognize.stereo_scores(gray))
+    layout = tags.merged(recognize.from_picture(gray, stereo))
+    h, w = gray.shape
+    projection = layout.projection or ("equi" if 1.9 < w / h < 2.1 else "screen")
+    return VideoInfo(str(path), path.stem, projection, stereo, source="photo", video_url=str(path), fov=layout.fov)
