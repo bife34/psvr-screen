@@ -4,8 +4,8 @@ import threading
 import numpy as np
 from windows_capture import WindowsCapture
 
-from . import windows
-from .vr import FrameGrabber
+from .win import windows
+from .legacy.steamvr_overlay import FrameGrabber
 
 
 class WindowSource:

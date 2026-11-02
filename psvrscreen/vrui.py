@@ -13,7 +13,7 @@ import math
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .settings import LIMITS, locked
+from .core.settings import LIMITS, locked
 
 UI_PX_PER_DEGREE = 24                # image pixels per degree of view (~2x what the headset shows: smooth)
 FONT = "seguisb.ttf"                 # Segoe UI Semibold

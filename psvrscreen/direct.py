@@ -14,13 +14,14 @@ import glfw
 import numpy as np
 from OpenGL import GL
 
-from . import apps, displays, vrui, windows
-from .media import MediaWatcher
+from . import vrui
+from .win import displays, start_apps as apps, windows
+from .win.media import MediaWatcher
 from .pointer import Pointer
-from .psvr import BUTTON_MIC_MUTE, PSVRControl, PSVRError, PSVRSensors
-from .settings import new_panel
+from .device.psvr import BUTTON_MIC_MUTE, PSVRControl, PSVRError, PSVRSensors
+from .core.settings import new_panel
 from .sources import SourceManager
-from .tracking import HeadTracker, q_to_matrix, yaw_pitch
+from .device.tracking import HeadTracker, q_to_matrix, yaw_pitch
 
 EYE_W, EYE_H = 960, 1080               # each eye gets half of the 1920x1080 panel
 RENDER_SCALE = 1.4                     # render bigger than the panel, the lens correction magnifies the center

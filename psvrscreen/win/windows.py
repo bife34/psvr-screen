@@ -9,7 +9,7 @@ import os
 from ctypes import wintypes
 
 from . import displays
-from .settings import new_panel
+from ..core.settings import new_panel
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32

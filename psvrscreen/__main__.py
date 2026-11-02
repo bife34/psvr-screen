@@ -2,10 +2,10 @@
 import ctypes
 
 from .direct import DirectEngine
-from .gamepad import GamepadMouse
-from .panel import ControlPanel
-from .settings import SettingsStore
-from .vr import VREngine
+from .device.gamepad import GamepadMouse
+from .panel.control_panel import ControlPanel
+from .core.settings import SettingsStore
+from .legacy.steamvr_overlay import VREngine
 
 
 def main():

@@ -5,9 +5,9 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
-from . import displays, windows
-from . import shortcuts as shortcut_keys
-from .settings import LIMITS, SHORTCUT_ACTIONS, new_panel
+from ..win import displays, windows
+from ..win import shortcuts as shortcut_keys
+from ..core.settings import LIMITS, SHORTCUT_ACTIONS, new_panel
 
 BG = "#14181f"
 PANEL = "#1b2029"

@@ -21,8 +21,8 @@ from ctypes import wintypes
 
 import numpy as np
 
-from . import displays, shortcuts
-from .settings import LIMITS
+from .win import displays, shortcuts
+from .core.settings import LIMITS
 from .vrui import hotspot_at as vrui_hotspot_at
 
 user32 = ctypes.windll.user32

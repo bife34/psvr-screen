@@ -13,7 +13,7 @@ import glfw
 import openvr
 from OpenGL import GL
 
-from .capture import Capture
+from ..win.screen_grab import Capture
 
 OVERLAY_KEY = "psvrscreen.main"
 ROOM_COLOR = (0.06, 0.08, 0.11)
