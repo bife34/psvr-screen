@@ -25,7 +25,7 @@ from .device.tracking import q_to_matrix, yaw_pitch
 from .render.headset import QUALITY_SCALES, HeadsetDisplay, HeadsetError
 from .render.renderer import Renderer
 from .shell.shell import Shell
-from .win import displays
+from .win import displays, windows
 
 NECK = np.array([0.0, 0.075, -0.08])   # eyes sit above and in front of the neck pivot
 SNAPSHOT_SECONDS = 3.0
@@ -35,11 +35,13 @@ class _RECT(ctypes.Structure):
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
 
-def _keep_mouse_off_headset(enable, mouse_in_vr=False):
+def _keep_mouse_off_headset(enable, mouse_in_vr=False, game_rect=None):
     """The headset is a monitor too: keep the real mouse off it. Mouse on the main screen: it stays on the
     main monitor (not on the invisible VR monitor, where you'd lose it). Mouse in VR: the pointer places the
     real cursor on main + VR monitor itself."""
-    if enable:
+    if enable and game_rect is not None:          # playing a game in VR: the mouse stays on its window
+        ctypes.windll.user32.ClipCursor(ctypes.byref(_RECT(*game_rect)))
+    elif enable:
         rect = _RECT(*(displays.mouse_area("both") if mouse_in_vr else displays.mouse_area("shown", "main")))
         ctypes.windll.user32.ClipCursor(ctypes.byref(rect))
     else:
@@ -180,7 +182,9 @@ class DirectEngine(threading.Thread):
             if t - t_fps >= 1.0:
                 self.fps = frames / (t - t_fps)
                 frames, t_fps = 0, t
-                _keep_mouse_off_headset(True, mouse_in_vr=self.pointer.active)   # Windows resets it at times
+                game = self.shell.game_in_front()
+                _keep_mouse_off_headset(True, mouse_in_vr=self.pointer.active,   # Windows resets it at times
+                                        game_rect=windows.window_rect(windows.foreground()) if game else None)
                 if not self.simulator and displays.ensure_headset_hz():
                     self.status = "Headset had dropped to 59 Hz - set back to 90 Hz"
             if self.snapshot_path and t - t_snapshot >= SNAPSHOT_SECONDS:

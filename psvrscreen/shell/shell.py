@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import apps
-from ..apps.desktop import new_panel_for
+from ..apps.desktop import new_game_panel, new_panel_for
 from ..core import geometry
 from ..core.log import log_error
 from ..core.settings import new_panel, shown_title
@@ -36,6 +36,7 @@ from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_vid
 BAR_LINGER_SECONDS = 1.5          # a window's title bar stays this long after the pointer leaves the window
 CARD_DISTANCE, CARD_SIDE_DEGREES = 1.2, 18   # settings card: near you, a little to the right of its window
 OPENED_FROM_VR_SECONDS = 6        # a new app window this soon after a click in VR was opened from VR
+GAME_START_SECONDS = 180         # a game's window may take this long to appear (launchers, loading)
 CONTINUE_FROM_SECONDS = 20       # a video stopped after this and before the end is in Continue watching
 CONTINUE_UNTIL = 0.95             # (part of its length: later counts as watched)
 CONTINUE_KEEP = 9
@@ -91,6 +92,10 @@ class AppHost:
     def forget_recent(self, paths):
         """Take a file (or a list of them) off Recent."""
         self._shell.forget_recent(paths)
+
+    def start_game(self, game):
+        """Start a game (Games app): its window comes into VR as a big screen."""
+        self._shell.start_game(game)
 
     def open_file(self, path):
         """Open a file (or folder) in its Windows app; the app's window comes into VR."""
@@ -176,6 +181,9 @@ class Shell:
         self.dismissed_videos = set()            # video ids whose "Watch in VR" was closed with its x
         self.dismissed_media = None              # title of the paused media whose player row was closed
         self.played_media = set()                # titles that played during this session (paused ones stay)
+        self._game = None                        # (Game, when started) while its window is awaited
+        self.game_windows = set()                # hwnds of games in VR (read by the controller threads)
+        self._enter_game = False                 # a click on a game: the controls go to it after the click
         self._opened_file = None                 # a video file's VideoInfo, ready to play (from a thread)
 
     # -- lifetime --------------------------------------------------------------------------------
@@ -230,6 +238,15 @@ class Shell:
     def _surfaces(self, now):
         self._settings = s = self.store.get()
         self._sync_windows(s)
+        self.game_windows = {getattr(self.windows[p["id"]].content, "hwnd", None)
+                             for p in s.panels if p.get("game") and p["id"] in self.windows}
+        if self._enter_game and not self.pointer.pressing:      # the click into the game is done: play
+            self._enter_game = False
+            window = next((w for w in self.windows.values() if getattr(w.content, "hwnd", None) in self.game_windows
+                           and w.surface is not None and self.pointer.hit and self.pointer.hit[0].id == w.surface.id),
+                          None)
+            if window is not None:
+                self.play_game(window.content.hwnd)
         if now - self._adopt_checked > 1.0:
             self._adopt_checked = now
             self._adopt_new_windows(s)
@@ -622,6 +639,10 @@ class Shell:
             self._close_dialog()
         if surface is None and button == "right" and self.video is not None:
             self.video_menu()
+        if surface is not None and button == "left":
+            p = self.panel(surface.data.get("window_id"))
+            if p is not None and p.get("game"):
+                self._enter_game = True                # clicking a game screen: you play it
 
     # -- right-click menus -----------------------------------------------------------------------------
     def open_menu(self, title, items):
@@ -696,6 +717,38 @@ class Shell:
             ("Play on a screen (flat)", Icon.PLAY, play("screen", "mono"), "flat")] +
             ([("Remove from Recent", Icon.CLOSE, lambda: self.forget_recent(path), "flat")] if recent else []) +
             [("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat")])
+
+    # -- games -----------------------------------------------------------------------------------------------
+    def start_game(self, game):
+        self._close_dialog()
+        self._game = (game, time.monotonic())
+        try:
+            game.start()
+        except OSError:
+            log_error(f"start {game.name}")
+            self._game = None
+
+    def game_in_front(self):
+        """A game in VR has the keyboard and the controls aren't in VR: the DS4 and mouse play the game (any
+        thread)."""
+        return not self.pointer.active and windows.foreground() in self.game_windows
+
+    def play_game(self, hwnd):
+        """Give the controls to a game: the mouse and DS4 leave VR, the game comes to the front."""
+        self.pointer.enabled = False
+        windows.bring_to_front(hwnd)
+
+    def _game_window_appeared(self, hwnd, title, exe):
+        """A new window during a game's start: the game's own (its program is in its folder) becomes the big
+        screen and gets the controls; launchers and the like come in as normal windows."""
+        game, _ = self._game
+        path = windows.exe_path(hwnd).lower()
+        if not path.startswith(os.path.normcase(game.folder).lower() + os.sep):
+            return False
+        workspace.add_window(self.store, new_game_panel(hwnd, title, exe), self.look_yaw)
+        self._game = None
+        self.play_game(hwnd)
+        return True
 
     def open_file(self, path):
         self._close_dialog()
@@ -801,7 +854,9 @@ class Shell:
         becomes a VR window. Windows opened from the main screen stay on the main screen."""
         current = {hwnd: (title, exe) for hwnd, title, exe in windows.list_open_windows()}
         now = time.monotonic()
-        launched = now - self._launched_at < LAUNCHED_FROM_VR_SECONDS
+        if self._game is not None and now - self._game[1] > GAME_START_SECONDS:
+            self._game = None
+        launched = now - self._launched_at < LAUNCHED_FROM_VR_SECONDS or self._game is not None
         clicked = s.auto_add_windows and self.pointer.active and now - self.last_click < OPENED_FROM_VR_SECONDS
         if self._known_windows is not None:
             # A new window that opened on the invisible VR monitor by itself (Windows opens it where the app's
@@ -812,6 +867,8 @@ class Shell:
             for hwnd in new:
                 if hwnd not in in_vr and (launched or clicked or hwnd in on_vr):
                     title, exe = current[hwnd]
+                    if self._game is not None and self._game_window_appeared(hwnd, title, exe):
+                        continue
                     workspace.add_window(self.store, new_panel_for(hwnd, title, exe), self.look_yaw)
         self._known_windows = set(current)
 

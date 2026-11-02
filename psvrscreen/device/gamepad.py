@@ -118,14 +118,23 @@ class GamepadMouse(threading.Thread):
             s = self.store.get()
 
             pointer = getattr(self.engine, "pointer", None)
-            if (buttons & (BACK | START)) == (BACK | START) and pressed & (BACK | START):
+            shell = getattr(self.engine, "shell", None)
+            in_game = shell is not None and shell.game_in_front()
+            both = (buttons & (BACK | START)) == (BACK | START) and pressed & (BACK | START)
+            if in_game:
+                # A game is being played: the pad is the game's. Share + Options: back to VR.
+                if both and pointer is not None:
+                    pointer.enabled = True
+                self.status = f"Controller {pad_index + 1}: playing the game (Share + Options: back to VR)"
+            elif both:
                 self.store.update(gamepad_mouse=not s.gamepad_mouse)
                 s = self.store.get()
             elif pressed & START and pointer is not None:
                 pointer.toggle()   # Options: mouse/pad between VR and the main screen
-            self.status = f"Controller {pad_index + 1} connected - mouse {'ON' if s.gamepad_mouse else 'OFF'}"
+            if not in_game:
+                self.status = f"Controller {pad_index + 1} connected - mouse {'ON' if s.gamepad_mouse else 'OFF'}"
 
-            if not s.gamepad_mouse:
+            if not s.gamepad_mouse or in_game:
                 if left_down:
                     _mouse(MOUSEEVENTF_LEFTUP)
                     left_down = False

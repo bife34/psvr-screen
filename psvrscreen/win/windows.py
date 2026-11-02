@@ -93,7 +93,27 @@ def exe_of(hwnd):
     return exe
 
 
-def _process_exe(hwnd):
+def foreground():
+    """The window that gets the keyboard (in front)."""
+    return user32.GetForegroundWindow()
+
+
+def bring_to_front(hwnd):
+    user32.SetForegroundWindow(hwnd)
+
+
+def window_rect(hwnd):
+    r = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    return r.left, r.top, r.right, r.bottom
+
+
+def exe_path(hwnd):
+    """Full path of the program a window belongs to ("" if unknown)."""
+    return _process_exe(hwnd, full=True)
+
+
+def _process_exe(hwnd, full=False):
     pid = wintypes.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
@@ -103,7 +123,7 @@ def _process_exe(hwnd):
         buf = ctypes.create_unicode_buffer(1024)
         size = wintypes.DWORD(len(buf))
         if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-            return os.path.basename(buf.value)
+            return buf.value if full else os.path.basename(buf.value)
         return ""
     finally:
         kernel32.CloseHandle(handle)

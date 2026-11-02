@@ -53,6 +53,22 @@ def new_panel_for(hwnd, title, exe):
     return panel
 
 
+def new_game_panel(hwnd, title, exe):
+    """A game's window: a big screen in front of you, the game drawn as big as the VR monitor allows (sharp)."""
+    w_pt, h_pt = windows.shown_size_points(hwnd)
+    aspect = h_pt / w_pt if w_pt else 9 / 16
+    vr_w, vr_h, _ = displays.VR_MONITOR_MODE
+    panel = new_panel("window", title, exe, hwnd, width=GAME_WIDTH, distance=GAME_DISTANCE, height=GAME_HEIGHT,
+                      curvature=GAME_CURVE)
+    panel["aspect"] = aspect
+    panel["pixels"] = min(vr_w, vr_h / aspect)
+    panel["game"] = True
+    return panel
+
+
+GAME_WIDTH, GAME_DISTANCE, GAME_HEIGHT, GAME_CURVE = 5.0, 3.5, 0.3, 0.05   # a cinema screen, a bit above the dock
+
+
 def base_pixels(panel):
     """The window's pixel width at text size 1.0. Older windows without one: readable at their VR size."""
     if panel.get("pixels"):
