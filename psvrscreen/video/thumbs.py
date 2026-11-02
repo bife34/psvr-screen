@@ -14,6 +14,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from ..core.log import log_error
+
 WIDTH = 480
 MEMORY = 400                      # thumbnails kept in memory
 CACHE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "PSVRScreen" / "thumbs"
@@ -72,6 +74,7 @@ class Thumbnails:
             try:
                 result = self._make(path)
             except Exception:
+                log_error(f"thumbnail {path.name}")
                 result = None
             self._asked.discard(str(path))
             if result is None:
