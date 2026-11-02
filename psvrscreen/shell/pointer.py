@@ -11,6 +11,7 @@ render thread, once per frame.
 import ctypes
 import math
 import queue
+import time
 
 import numpy as np
 
@@ -45,6 +46,8 @@ class Pointer:
         self._captured = None         # (surface, button, press event) while a button is held
         self.on_press = None          # shell callback(surface or None): a press happened (closes dialogs...)
         self.background = None        # target for presses on nothing (the video, to drag it around you)
+        self.look = (0.0, 0.0)        # where you look (yaw, pitch radians), set by the engine every frame
+        self.laser_seen = -100.0      # when the controller last aimed the pointer (the laser shows a while)
 
     # -- switching the mouse into VR (any thread) ------------------------------------------------
     def start(self):
@@ -110,6 +113,14 @@ class Pointer:
     def wheel(self, delta, horizontal=False):
         self._events.put(("wheel", delta, horizontal, False))
 
+    def turn(self, left_degrees, up_degrees):
+        """The controller turned (DS4 motion): the pointer turns with it."""
+        self._events.put(("turn", left_degrees, up_degrees))
+
+    def to_look(self):
+        """Put the pointer where you look (DS4 touchpad click)."""
+        self._events.put(("to_look",))
+
     # -- render thread ------------------------------------------------------------------------------
     def recenter(self, yaw=0.0, pitch=0.0):
         self.yaw, self.pitch = yaw, pitch
@@ -136,6 +147,15 @@ class Pointer:
                 speed = DEGREES_PER_COUNT * self.store.get().mouse_speed
                 self.yaw -= math.radians(event[1] * speed)
                 self.pitch = max(-1.4, min(1.4, self.pitch - math.radians(event[2] * speed)))
+                moved = True
+            elif kind == "turn":
+                self.yaw += math.radians(event[1])
+                self.pitch = max(-1.4, min(1.4, self.pitch + math.radians(event[2])))
+                self.laser_seen = time.monotonic()
+                moved = True
+            elif kind == "to_look":
+                self.yaw, self.pitch = self.look
+                self.laser_seen = time.monotonic()
                 moved = True
             else:
                 if moved:

@@ -1,6 +1,7 @@
 """PSVR Screen: your PC screen in VR, controlled from a 3D control panel and the gamepad."""
 import ctypes
 
+from .device.ds4_motion import DS4Motion
 from .device.gamepad import GamepadMouse
 from .panel.control_panel import ControlPanel
 from .core.settings import SettingsStore
@@ -16,12 +17,15 @@ def main():
     store = SettingsStore.load()
     engine = DirectEngine(store) if store.get().engine == "direct" else VREngine(store)
     pad = GamepadMouse(store, engine)
+    motion = DS4Motion(store, engine)
     engine.start()
     pad.start()
+    motion.start()
     try:
         ControlPanel(store, engine, pad).run()
     finally:
         pad.stop()
+        motion.stop()
         engine.stop()
         engine.join(15)
         store.save()

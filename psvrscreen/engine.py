@@ -139,6 +139,7 @@ class DirectEngine(threading.Thread):
             self.shell.look_yaw = -math.degrees(self.look_yaw)
             self.shell.look_pitch = math.degrees(self.look_pitch)
             head_rot = np.array(q_to_matrix(q), np.float32)
+            self.pointer.look = (yaw, pitch)
             self.headset_worn = headset.worn
 
             # The space and its input

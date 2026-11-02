@@ -12,6 +12,8 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
+
 from .. import apps
 from ..apps.desktop import new_panel_for
 from ..core import geometry
@@ -37,6 +39,10 @@ OPENED_FROM_VR_SECONDS = 6        # a new app window this soon after a click in 
 CONTINUE_FROM_SECONDS = 20       # a video stopped after this and before the end is in Continue watching
 CONTINUE_UNTIL = 0.95             # (part of its length: later counts as watched)
 CONTINUE_KEEP = 9
+LASER_SECONDS = 4.0              # the laser shows this long after the controller last aimed
+LASER_HAND = (0.12, -0.38, -0.22)  # where the beam starts: your right hand, from your eyes (m)
+LASER_WIDTH = 0.004
+LASER_COLOR = (0.45, 0.72, 1.0, 0.55)
 LAUNCHED_FROM_VR_SECONDS = 20     # apps can take a while to show their window after launching
 LENS_SIZE, LENS_ZOOM = 0.38, 2.0  # zoom lens: width as part of the window, magnification
 POINTER_BLUE = (0.31, 0.61, 0.98, 1.0)
@@ -387,6 +393,8 @@ class Shell:
         face = (geometry.translate(*end) @ geometry.rotate_y(math.degrees(self.pointer.yaw))
                 @ geometry.rotate_x(math.degrees(self.pointer.pitch)))
         size = 0.012 * distance
+        if time.monotonic() - self.pointer.laser_seen < LASER_SECONDS:
+            out.append(_laser(end))
         out.append(Surface("dot", face @ geometry.scale(size), 1, 1, shape="disc", color=POINTER_BLUE, layer=OVERLAY))
         out.append(Surface("dot-center", face @ geometry.translate(0, 0, 0.001) @ geometry.scale(size * 0.55), 1, 1,
                            shape="disc", color=(1.0, 1.0, 1.0, 1.0), layer=OVERLAY))
@@ -765,6 +773,22 @@ class Shell:
                     title, exe = current[hwnd]
                     workspace.add_window(self.store, new_panel_for(hwnd, title, exe), self.look_yaw)
         self._known_windows = set(current)
+
+
+def _laser(end):
+    """The laser: a thin beam from your right hand (low, in front of you) to the pointer dot, turned to face you."""
+    start = np.array(LASER_HAND)
+    along = end - start
+    length = float(np.linalg.norm(along))
+    y = along / length
+    middle = (start + end) / 2
+    z = -middle / np.linalg.norm(middle)             # toward your eyes
+    x = np.cross(y, z)
+    x /= np.linalg.norm(x)
+    z = np.cross(x, y)
+    model = np.eye(4, dtype=np.float32)
+    model[:3, 0], model[:3, 1], model[:3, 2], model[:3, 3] = x, y, z, middle
+    return Surface("laser", model, LASER_WIDTH, length, color=LASER_COLOR, layer=OVERLAY)
 
 
 class _Lingering:

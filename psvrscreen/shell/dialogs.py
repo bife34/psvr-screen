@@ -33,6 +33,8 @@ SETTINGS_SECTIONS = [
     ]),
     ("controls", "Controls", Icon.MOUSE, [
         ("slider", "mouse_speed", "Mouse speed", "{:.1f}x"),
+        ("toggle", "gyro_pointer", "Aim with the DS4 (laser)", None),
+        ("slider", "gyro_speed", "Laser speed", "{:.1f}x"),
         ("toggle", "auto_add_windows", "Apps opened from VR open in VR", None),
         ("toggle", "follow_head", "Windows follow my head", None),
         ("title", None, "Keyboard shortcuts", None),

@@ -77,6 +77,8 @@ class Settings:
     mouse_lock: str = "shown"   # "shown" = mouse stays on the monitor shown in VR, "both" = main + VR monitor
     gamepad_mouse: bool = True
     mouse_speed: float = 1.0
+    gyro_pointer: bool = True            # turn the DS4 to aim the VR pointer (a laser from your hand)
+    gyro_speed: float = 1.0              # 1 = the pointer turns as much as the controller
     engine: str = "direct"      # "direct" = our own VR without SteamVR, "steamvr" = overlay in SteamVR
     # Lens fine-tuning for direct mode
     lens_fov: float = 95.0      # degrees across one eye's rendered image
@@ -126,6 +128,7 @@ LIMITS = {
     "text_zoom": (1.0, 2.5),
     "fps": (10, 60),
     "mouse_speed": (0.2, 3.0),
+    "gyro_speed": (0.5, 3.0),
     "lens_fov": (70.0, 130.0),
     "ipd": (0.055, 0.075),
     "lens_k1": (0.0, 0.6),
