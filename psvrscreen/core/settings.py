@@ -87,6 +87,10 @@ class Settings:
     lens_apart: float = 0.0     # + = the two pictures farther apart on the headset's screen
     lens_height: float = 0.0    # + = the left eye's picture higher than the right one's
     eye_test: bool = False      # show the alignment crosses (red: left eye, green: right eye)
+    # Surroundings (render/environment.py): a 360° scene around you instead of the dark room
+    environment: str = ""                # a scene's name ("" = the dark room)
+    environment_brightness: float = 0.75 # dimmer: windows stand out more
+    environment_turn: float = 0.0        # degrees the scene is turned around you
     # VR videos
     private_mode: bool = False           # hide what you watch: titles become app names / "Video", no history
     video_screen_degrees: float = 60.0   # "screen" videos: how wide the screen looks
@@ -144,6 +148,8 @@ LIMITS = {
     "video_place_up": (-0.9, 0.9),
     "video_brightness": (0.5, 1.5),
     "video_volume": (0.0, 1.5),
+    "environment_brightness": (0.15, 1.3),
+    "environment_turn": (-180.0, 180.0),
 }
 
 

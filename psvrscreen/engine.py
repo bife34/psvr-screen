@@ -162,6 +162,7 @@ class DirectEngine(threading.Thread):
             surfaces = surfaces + self.shell.overlay()
 
             # Both eyes, then the lens correction
+            renderer.set_environment(s.environment, s.environment_brightness, s.environment_turn)
             proj = display.projection(s.lens_fov)
             for eye, side in enumerate((-1.0, 1.0)):
                 eye_pos = head_rot @ (np.array([side * s.ipd / 2, 0.0, 0.0]) + NECK) - NECK

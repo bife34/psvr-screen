@@ -4,7 +4,8 @@ from ..core.settings import DEFAULT_SHORTCUTS, LIMITS, SHORTCUT_ACTIONS
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Label, Panel, Row, Slider, Spacer, Toggle
+from ..render import environment
+from ..ui.widgets import Button, Card, Column, Grid, Label, Panel, Row, Slider, Spacer, Toggle
 
 DIALOG_DISTANCE = 1.0
 MENU_DISTANCE = 0.9               # the right-click menu opens this far away, where you pointed
@@ -24,6 +25,11 @@ SETTINGS_SECTIONS = [
         ("toggle", "eye_test", "Eye alignment test", None),
         ("slider", "lens_apart", "Eyes apart", "{:+.3f}"),
         ("slider", "lens_height", "Eye height", "{:+.3f}"),
+    ]),
+    ("surroundings", "Surroundings", Icon.SPHERE, [
+        ("environments", "environment", None, None),
+        ("slider", "environment_brightness", "Brightness", "{:.0%}"),
+        ("slider", "environment_turn", "Turn the scene", "{:+.0f}°"),
     ]),
     ("controls", "Controls", Icon.MOUSE, [
         ("slider", "mouse_speed", "Mouse speed", "{:.1f}x"),
@@ -52,6 +58,7 @@ class GlobalSettings(View):
         super().__init__(distance=DIALOG_DISTANCE)
         self.shell = shell
         self.section = SETTINGS_SECTIONS[0][0]
+        environment.warm_previews()
 
     def state(self):
         s = self.shell.settings()
@@ -81,6 +88,8 @@ class GlobalSettings(View):
                     rows.append(Row([Label(name, size=theme.SMALL - 4, flex=1, indent=24),
                                      Label(keys, size=theme.SMALL - 4, color=theme.ACCENT_LIGHT)], w=w,
                                     h=theme.ROW - 8))
+            elif kind == "environments":
+                rows.append(_environment_cards(s, store, w))
             elif kind == "slider":
                 lo, hi = LIMITS[key]
                 rows.append(Slider(key, label, getattr(s, key), lo, hi, fmt, w=w,
@@ -91,6 +100,19 @@ class GlobalSettings(View):
         content = Column(rows, gap=4, align="start", h=SETTINGS_HEIGHT)
         return Panel([Column(nav, gap=6, align="start", h=SETTINGS_HEIGHT), content], horizontal=True, pad=28,
                      gap=24, align="start")
+
+
+def _environment_cards(s, store, w):
+    columns = 4
+    card_w = (w - 48 - (columns - 1) * theme.GAP * 2) // columns
+    card_h = card_w // 2 + int(theme.SMALL * 1.6)
+    cards = []
+    for name in [""] + environment.names():
+        on = [("On", theme.ACCENT)] if name == s.environment else []
+        cards.append(Card("env:" + name, name or "Dark room", environment.preview(name) if name else None,
+                          card_w, card_h, badges=on, icon=Icon.SPHERE,
+                          on_click=lambda name=name: store.update(environment=name)))
+    return Row([Spacer(w=24), Grid(cards, columns)], w=w, align="start")
 
 
 def _wrap(text, fnt, width):

@@ -1,0 +1,13 @@
+Surroundings (360° pictures shown around you in VR)
+
+All from Poly Haven (https://polyhaven.com/hdris), CC0 - public domain, free for any use.
+Tonemapped JPG versions, shrunk to 4096x2048.
+
+  Mountains             lilienstein            https://polyhaven.com/a/lilienstein
+  Beach                 spiaggia_di_mondello   https://polyhaven.com/a/spiaggia_di_mondello
+  Fireplace             fireplace              https://polyhaven.com/a/fireplace
+  City at night         shanghai_bund          https://polyhaven.com/a/shanghai_bund
+  Starry night          rogland_clear_night    https://polyhaven.com/a/rogland_clear_night
+  Sunset field          kloppenheim_06         https://polyhaven.com/a/kloppenheim_06
+
+Add your own: put any 360° picture (twice as wide as tall) in this folder - its file name is its name.

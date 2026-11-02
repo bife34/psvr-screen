@@ -5,6 +5,7 @@ from OpenGL import GL
 from ..core import geometry
 from ..scene.surface import INTERFACE, OVERLAY, WORLD
 from .gl import MeshCache, Mesh, Program
+from .environment import Environment
 from .video_sphere import VideoSphere
 
 FLOOR_Y = -1.2                         # floor below your eyes (seated), meters
@@ -59,6 +60,13 @@ class Renderer:
         self._disc = Mesh(*geometry.disc_vertices())
         self.meshes = MeshCache()
         self._video = VideoSphere()
+        self.environment = Environment()
+        self._environment_look = (1.0, 0.0)   # brightness, turn
+
+    def set_environment(self, name, brightness, turn):
+        """The surroundings to show (every frame; cheap when nothing changed)."""
+        self.environment.choose(name)
+        self._environment_look = (brightness, turn)
 
     def _mesh(self, s):
         if s.shape == "disc":
@@ -77,6 +85,8 @@ class Renderer:
                 self._video.draw(view_proj, s, eye)
             surfaces = [s for s in surfaces if s.shape != "sphere"]
         else:
+            self.environment.draw(view_proj, *self._environment_look)
+        if not spheres and not self.environment.active:
             floor = self._floor_prog.use()
             floor.mat4("mvp", view_proj)
             floor.float("uv_rect", 0.0, 0.0, 1.0, 1.0)
