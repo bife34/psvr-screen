@@ -42,6 +42,7 @@ class Icon:
     ADD, ZOOM, APPS = "", "", ""
     PAGE_UP, PAGE_DOWN = "", ""
     FOLDER, FILE, BACK, UP = "", "", "", ""
+    VIDEO = ""
 
 
 _fonts = {}

@@ -1,17 +1,21 @@
 """VR videos: noticing them in browser windows, and watching them around you.
 
-VideoDetector (background thread) reads the address of every browser window that shows YouTube and asks
-YouTube whether that video is a VR video. If it is, a "Watch in VR" button appears under the window (in VR)
-or above the dock (a browser on the main screen).
+VideoDetector (background thread) reads the address of every browser window on YouTube or with VR in its
+title and asks the site (video/sites.py) whether that is a VR video. If it is, a "Watch in VR" button appears
+under the window (in VR) or above the dock (a browser on the main screen).
 
 ImmersiveVideo is the video mode: the video plays on a sphere around you (render/video_sphere.py) instead
 of the room and the windows; its controls float below in front of the video while the pointer is in VR, and
 their ⚙ opens the video settings (view, 3D, size, distance, brightness, volume - all sliders).
-The browser's own playback is paused when it starts.
+Two sources: the site's stream, played here (the browser's own playback is paused), or - when the site's
+stream can't be played - the browser window's picture (WindowPlayer; the browser plays it, with its sound).
 """
 import dataclasses
 import math
 import threading
+import time
+
+import numpy as np
 
 from ..core import geometry
 from ..core.settings import LIMITS, Settings, clamp
@@ -21,8 +25,9 @@ from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
 from ..ui.widgets import Button, Column, Label, Row, SeekBar, Slider, Spacer, Widget
-from ..video import youtube
+from ..video import recognize, sites
 from ..video.player import VideoPlayer
+from ..win.capture import WindowCapture
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT
 
 BROWSERS = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"}
@@ -33,7 +38,11 @@ SIDE_WIDTH = 560                   # controls: title on the left, settings / mou
 PANEL_WIDTH = 1120                 # video settings
 PANEL_GAP = 0.02                   # m between the controls and the settings above them
 SKIP_SECONDS = 10
-PROJECTION_NAMES = {"equi": "360°", "equi180": "180°", "mesh": "360°", "screen": "Screen"}
+PROJECTION_NAMES = {"equi": "360°", "equi180": "180°", "mesh": "360°", "screen": "Screen", "fisheye": "Fisheye",
+                    None: "VR"}
+WINDOW_LOOKS = 3                   # window source: frames looked at (1 s apart) to recognise the layout
+WINDOW_RECHECK_SECONDS = 6         # a window source is looked at again this often (did it go full screen?)
+WINDOW_SAME_PICTURE = 0.5          # stricter than for streams: a web page's own layout can look a bit 3D
 STEREO_NAMES = {"mono": "2D", "top_bottom": "3D ↕", "side_by_side": "3D ↔"}
 VIDEO_DEFAULTS = {f.name: f.default for f in dataclasses.fields(Settings) if f.name.startswith("video_")}
 DOME_MAP_PX = 300                  # the dome map in the video settings
@@ -41,18 +50,21 @@ PLACE_LIMIT = 0.9                  # you can go this far from the middle (part o
 
 
 def is_browser_video(exe, title):
-    return (exe or "").lower() in BROWSERS and "youtube" in (title or "").lower()
+    """A browser window worth asking: on YouTube, or a page that talks about VR."""
+    title = title or ""
+    return (exe or "").lower() in BROWSERS and ("youtube" in title.lower() or recognize.looks_vr(title))
 
 
 class VideoDetector(threading.Thread):
-    """Set `candidates` = [hwnd] (browser windows showing YouTube); read `found` = {hwnd: VideoInfo} for the
+    """Set `candidates` = [(hwnd, title)] (see is_browser_video); read `found` = {hwnd: VideoInfo} for the
     ones showing a VR video."""
 
     def __init__(self):
         super().__init__(daemon=True, name="vr-video-detector")
         self.candidates = []
         self.found = {}
-        self._infos = {}                 # video id -> VideoInfo or None (not a VR video)
+        self._infos = {}                 # page address -> VideoInfo or None (not a VR video)
+        self._window_checks = {}         # hwnd -> (when, shows a VR picture) for window sources
         self._stop = threading.Event()
 
     def stop(self):
@@ -64,25 +76,53 @@ class VideoDetector(threading.Thread):
         try:
             while not self._stop.wait(CHECK_SECONDS):
                 found = {}
-                for hwnd in list(self.candidates):
-                    vid = youtube.video_id(reader.page_address(hwnd))
-                    if vid is None:
+                for hwnd, title in list(self.candidates):
+                    url = reader.page_address(hwnd)
+                    if url is None:
                         continue
-                    if vid not in self._infos:
+                    if url not in self._infos:
                         try:
-                            self._infos[vid] = youtube.probe(vid)
+                            self._infos[url] = sites.probe(url, title)
                         except Exception:
-                            continue     # network / YouTube trouble: try again next time
-                    if self._infos[vid] is not None:
-                        found[hwnd] = self._infos[vid]
+                            continue     # network / site trouble: try again next time
+                    info = self._infos[url]
+                    if info is not None and (info.source != "window" or self._shows_vr(hwnd)):
+                        found[hwnd] = info
                 self.found = found
         finally:
             reader.close()
 
+    def _shows_vr(self, hwnd):
+        """A window source counts only while the window really shows a VR picture (the eyes' pictures, or a
+        fisheye circle) - not a site's own 360 viewer, which shows an ordinary flat view."""
+        checked, verdict = self._window_checks.get(hwnd, (-WINDOW_RECHECK_SECONDS, False))
+        if time.monotonic() - checked < WINDOW_RECHECK_SECONDS:
+            return verdict
+        verdict = False
+        capture = WindowCapture(hwnd)
+        try:
+            for _ in range(20):
+                _, image = capture.latest()
+                if image is not None:
+                    break
+                time.sleep(0.05)
+        finally:
+            capture.stop()
+        if image is not None:
+            gray = image[::2, ::2, 1].astype(np.float32)
+            x0, y0, x1, y1 = recognize.content_box(gray)
+            h, w = gray.shape
+            video = gray[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+            if video.size > gray.size * 0.3:
+                side, stacked = recognize.stereo_scores(video)
+                verdict = max(side, stacked) >= WINDOW_SAME_PICTURE
+        self._window_checks[hwnd] = (time.monotonic(), verdict)
+        return verdict
+
 
 class WatchButton(View):
     """For a browser window (hwnd) that shows a VR video: under it in VR, or above the dock with the video's
-    title (`with_title`) when the browser is on the main screen."""
+    title (`with_title`) when the browser is on the main screen. Its x hides it (for this video)."""
 
     def __init__(self, shell, hwnd, distance, with_title=False):
         super().__init__(distance=distance)
@@ -90,33 +130,113 @@ class WatchButton(View):
 
     def state(self):
         info = self.shell.video_detector.found.get(self.hwnd)
-        return info and (info.video_id, info.projection, info.stereo)
+        return info and (info.key, info.projection, info.stereo)
 
     def build(self):
         info = self.shell.video_detector.found.get(self.hwnd)
         if info is None:
             return Row([], w=1, h=1)
-        kind = (STEREO_NAMES[info.stereo] + " " if info.stereo != "mono" else "") + PROJECTION_NAMES[info.projection]
+        kind = (STEREO_NAMES[info.stereo] + " " if info.stereo not in ("mono", None) else "") + \
+            PROJECTION_NAMES[info.projection]
         text = f"Watch in VR  ·  {kind}" + (f"  ·  {info.title}" if self.with_title else "")
-        return Row([Button("watch", text, Icon.PLAY, h=theme.BAR - 12, w=1400 if self.with_title else None,
-                           selected=True, on_click=lambda: self.shell.watch_video(self.hwnd))],
-                   pad=6, bg=theme.BG, radius=theme.RADIUS)
+        h = theme.BAR - 12
+        return Row([Button("watch", text, Icon.PLAY, h=h, w=1400 if self.with_title else None,
+                           selected=True, on_click=lambda: self.shell.watch_video(self.hwnd)),
+                    Button("dismiss", icon=Icon.CLOSE, w=int(h * 0.8), h=h, size=theme.SMALL - 6, style="danger",
+                           on_click=lambda: self.shell.dismiss_video(self.hwnd))],
+                   pad=6, gap=6, bg=theme.BG, radius=theme.RADIUS)
+
+
+class WindowPlayer:
+    """A browser window's picture as the video: the browser plays it, with its sound. Play / pause go through
+    Windows' media controls; there is no position to show or jump to."""
+    duration, position, ended, error = 0.0, 0.0, False, None
+
+    def __init__(self, hwnd, media):
+        self.media = media
+        self.latest = None                       # newest picture (BGRA)
+        self.crop = (0.0, 0.0, 1.0, 1.0)         # the part of the window that holds the video (no black borders)
+        self.volume = 1.0                        # (the browser's volume decides)
+        self._capture = WindowCapture(hwnd)
+        self._seq = -1
+
+    @property
+    def paused(self):
+        playing = self.media.now_playing
+        return bool(playing) and not playing["playing"]
+
+    @property
+    def buffering(self):
+        return self._seq < 0
+
+    def set_paused(self, paused):
+        if paused != self.paused:
+            self.media.command("play_pause")
+
+    def seek(self, seconds):
+        pass
+
+    def frame(self):
+        """The window's picture if it changed, else None."""
+        seq, image = self._capture.latest()
+        if image is None or seq == self._seq:
+            return None
+        self._seq, self.latest = seq, image
+        return image
+
+    def close(self):
+        self._capture.stop()
 
 
 class ImmersiveVideo:
-    def __init__(self, shell, info):
+    def __init__(self, shell, info, hwnd):
         self.shell, self.info = shell, info
-        self.projection, self.stereo = info.projection, info.stereo
+        self.window = info.source == "window"
+        self.projection = info.projection or "screen"   # unknown (a window): recognised from its picture
+        self.stereo = info.stereo or "mono"
+        self.fov = info.fov
+        self.recognizing = self.window and (info.projection is None or info.stereo is None)
         self.front_yaw = shell.look_yaw          # the video's front is where you looked when it started
-        self.player = VideoPlayer(info.video_url, info.audio_url, info.duration)
-        self.player.volume = shell.settings().video_volume
+        if self.window:
+            self.player = WindowPlayer(hwnd, shell.media)
+        else:
+            self.player = VideoPlayer(info.video_url, info.audio_url, info.duration, headers=info.headers)
+            self.player.volume = shell.settings().video_volume
         self.texture = VideoTexture()
         self.controls = Controls(self)
         self.panel = VideoSettings(self)
         self.settings_open = False
         self._pointer_seen = (None, 0.0)         # last pointer direction and when it changed
+        self._closed = False
+        if self.window:
+            threading.Thread(target=self._watch_window, daemon=True, name="vr-video-window").start()
+
+    def _watch_window(self):
+        """Window source, once a second: cut off black borders (a letterboxed video); the first seconds also
+        recognise the layout if the page didn't tell."""
+        scores = []
+        while not self._closed:
+            image = self.player.latest
+            if image is not None:
+                gray = image[::2, ::2, 1].astype(np.float32)        # green is close enough to brightness
+                x0, y0, x1, y1 = recognize.content_box(gray)
+                self.player.crop = (x0, y0, x1, y1)
+                h, w = gray.shape
+                video = gray[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+                if self.recognizing and video.size:
+                    scores.append(recognize.stereo_scores(video))
+                    if len(scores) >= WINDOW_LOOKS:
+                        stereo = self.info.stereo or recognize.stereo_of(np.mean(scores, axis=0))
+                        picture = recognize.from_picture(video, stereo)
+                        layout = recognize.Layout(self.info.projection, self.info.stereo, self.info.fov).merged(picture)
+                        self.stereo = layout.stereo or "mono"
+                        self.projection = layout.projection or ("equi180" if self.stereo != "mono" else "screen")
+                        self.fov = layout.fov
+                        self.recognizing = False
+            time.sleep(1.0)
 
     def close(self):
+        self._closed = True
         self.player.close()
         self.texture.delete()
         self.controls.release()
@@ -143,9 +263,11 @@ class ImmersiveVideo:
     def set_projection(self, projection):
         if self.projection != "mesh":     # the cube layout is only ever 360°
             self.projection = projection
+            self.recognizing = False      # your choice wins
 
     def set_stereo(self, stereo):
         self.stereo = stereo
+        self.recognizing = False
 
     def toggle_settings(self):
         self.settings_open = not self.settings_open
@@ -174,7 +296,10 @@ class ImmersiveVideo:
     def surfaces(self, now):
         frame = self.player.frame()
         if frame is not None:
-            self.texture.upload(frame)
+            if self.window:
+                self.texture.upload_bgra(frame)
+            else:
+                self.texture.upload(frame)
         s = self.shell.settings()
         front = geometry.rotate_y(-self.front_yaw)
         out = [Surface("video", front, 1, 1, texture=self.texture, shape="sphere",   # centered between your eyes
@@ -182,7 +307,8 @@ class ImmersiveVideo:
                              "screen_degrees": s.video_screen_degrees, "screen_curve": s.video_screen_curve,
                              "size": s.video_size, "brightness": s.video_brightness,
                              "move_away": s.video_move_away,
-                             "place": (s.video_place_right, s.video_place_up, s.video_place_forward)})]
+                             "place": (s.video_place_right, s.video_place_up, s.video_place_forward),
+                             "fov": self.fov, "crop": getattr(self.player, "crop", (0.0, 0.0, 1.0, 1.0))})]
         if self._controls_visible(now):
             self.controls.refresh()
             model = front @ geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
@@ -226,7 +352,8 @@ class Controls(View):
 
     def state(self):
         v, p = self.video, self.video.player
-        return (int(p.position), p.paused, p.ended, p.buffering, p.error, v.settings_open, self.ctx.drag_start)
+        return (int(p.position), p.paused, p.ended, p.buffering, p.error, v.settings_open, v.recognizing,
+                v.projection, v.stereo, self.ctx.drag_start)
 
     def build(self):
         v, p = self.video, self.video.player
@@ -237,6 +364,8 @@ class Controls(View):
             status, color = "Can't play: " + p.error, theme.DANGER
         elif p.buffering:
             status, color = "Loading...", theme.ACCENT_LIGHT
+        elif v.recognizing:
+            status, color = "Recognising the video...", theme.ACCENT_LIGHT
         else:
             status, color = PROJECTION_NAMES[v.projection] + ("  ·  3D" if v.stereo != "mono" else ""), theme.MUTED
         playing = not p.paused and not p.ended
@@ -245,20 +374,28 @@ class Controls(View):
             return Button(key, text, icon, h=h, w=w, style=style, selected=selected, size=theme.TEXT - 4,
                           on_click=action)
 
-        progress = Row([Label(_time(position), size=theme.SMALL, color=theme.FG, w=150, h=theme.ROW, align="right"),
-                        SeekBar("seek", position / duration if duration else 0.0, v.seek_fraction, h=theme.ROW,
-                                flex=1),
-                        Label(_time(duration) if duration else "live", size=theme.SMALL, color=theme.MUTED, w=150,
-                              h=theme.ROW)],
-                       w=CONTROLS_WIDTH, h=theme.ROW, gap=8)
+        if v.window:   # the browser plays it: jump around there
+            progress = Label("From the browser window - put the video in full screen there for the best picture",
+                             size=theme.SMALL - 4, color=theme.MUTED, w=CONTROLS_WIDTH, h=theme.ROW, align="center")
+        else:
+            progress = Row([Label(_time(position), size=theme.SMALL, color=theme.FG, w=150, h=theme.ROW,
+                                  align="right"),
+                            SeekBar("seek", position / duration if duration else 0.0, v.seek_fraction, h=theme.ROW,
+                                    flex=1),
+                            Label(_time(duration) if duration else "live", size=theme.SMALL, color=theme.MUTED,
+                                  w=150, h=theme.ROW)],
+                           w=CONTROLS_WIDTH, h=theme.ROW, gap=8)
         about = Column([Label(v.info.title, size=theme.SMALL, h=int(theme.ROW * 0.8), w=SIDE_WIDTH, indent=16),
                         Label(status, size=theme.SMALL - 4, color=color, h=int(theme.ROW * 0.7), w=SIDE_WIDTH,
                               indent=16)], w=SIDE_WIDTH, h=h)
-        center = Row([button("back", f"−{SKIP_SECONDS}s", action=lambda: v.skip(-SKIP_SECONDS), w=150),
-                      Button("play", icon=Icon.PAUSE if playing else Icon.PLAY, w=h + 14, h=h + 14,
-                            style="primary", size=theme.TEXT, on_click=v.play_pause),
-                      button("forward", f"+{SKIP_SECONDS}s", action=lambda: v.skip(SKIP_SECONDS), w=150)],
-                     gap=18, h=h + 14)
+        play = Button("play", icon=Icon.PAUSE if playing else Icon.PLAY, w=h + 14, h=h + 14, style="primary",
+                      size=theme.TEXT, on_click=v.play_pause)
+        if v.window:
+            center = Row([play], h=h + 14)
+        else:
+            center = Row([button("back", f"−{SKIP_SECONDS}s", action=lambda: v.skip(-SKIP_SECONDS), w=150), play,
+                          button("forward", f"+{SKIP_SECONDS}s", action=lambda: v.skip(SKIP_SECONDS), w=150)],
+                         gap=18, h=h + 14)
         right = Row([Spacer(flex=1),
                      button("settings", icon=Icon.SETTINGS, action=v.toggle_settings, selected=v.settings_open,
                             w=h + 10),
@@ -279,7 +416,7 @@ class VideoSettings(View):
 
     def state(self):
         v, s = self.video, self.video.shell.settings()
-        return (v.projection, v.stereo) + tuple(getattr(s, k) for k in VIDEO_DEFAULTS)
+        return (v.projection, v.stereo, v.recognizing) + tuple(getattr(s, k) for k in VIDEO_DEFAULTS)
 
     def build(self):
         v, s = self.video, self.video.shell.settings()
@@ -306,14 +443,13 @@ class VideoSettings(View):
                           else f"{math.exp(value):.0f} m",
                           on_change=lambda value: v.set_value("video_distance", math.exp(value)))
 
-        sphere_only = ("screen",) if v.projection == "mesh" else ()
-        views = [("screen", "Screen"), ("equi180", "180°"), ("equi", "360°")]
+        views = [("screen", "Screen"), ("equi180", "180°"), ("equi", "360°"), ("fisheye", "Fisheye")]
         current_view = "equi" if v.projection == "mesh" else v.projection
+        cube_only = ("screen", "equi180", "fisheye") if v.projection == "mesh" else ()   # the cube is only 360°
         rows = [Row([Label("Video settings", size=theme.TITLE, color=theme.ACCENT, flex=1, indent=24),
                      Button("reset", "Reset", h=theme.ROW - 8, style="flat", size=theme.TEXT - 6,
                             on_click=v.reset_settings)], w=w, h=int(theme.ROW * 1.2)),
-                choices("View", views, current_view, v.set_projection,
-                        disabled=sphere_only + (("equi180",) if v.projection == "mesh" else ())),
+                choices("View", views, current_view, v.set_projection, disabled=cube_only),
                 choices("3D", [("mono", "Off"), ("side_by_side", "Side by side"), ("top_bottom", "Top / bottom")],
                         v.stereo, v.set_stereo)]
         if v.projection == "screen":

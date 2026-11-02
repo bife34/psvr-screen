@@ -16,7 +16,8 @@ Each layer only uses the layers below it. Hardware and Windows details never lea
  core/        Settings (saved to settings.json) and 3D math, used by everything
  device/      The hardware: PSVR USB/HID protocol, head tracking, the headset session, the DS4
  win/         Windows services: monitors, app windows, capture, input injection, mouse hook, media, browser address
- video/       Video playback: YouTube lookup (yt-dlp), decoding picture and sound in sync (PyAV, sounddevice)
+ video/       VR videos: recognising the kind (tags, picture), YouTube / any site (yt-dlp), files on the PC,
+              decoding picture and sound in sync (PyAV, sounddevice)
  panel/       The control panel on the main screen (Tk)
  legacy/      The old SteamVR overlay mode (still selectable in the control panel)
 ```
@@ -61,7 +62,10 @@ goes back to the main screen until the next session.
 | Mouse / controller as VR pointer         | `shell/pointer.py`, `win/mouse_hook.py`, `device/gamepad.py` |
 | VR videos: detection, player controls    | `shell/vr_video.py`           |
 | VR video layouts (360, 180, cube, screen, 3D) | `render/video_sphere.py`  |
-| Which YouTube videos are VR, 3D check    | `video/youtube.py`            |
+| What kind of VR video (tags, 3D, fisheye) | `video/recognize.py`         |
+| Which YouTube videos are VR              | `video/youtube.py`            |
+| Other sites; window fallback             | `video/sites.py`, `shell/vr_video.py` (WindowPlayer) |
+| Video files on the PC                    | `video/files.py`              |
 | Decoding, sound, sync, seeking           | `video/player.py`             |
 
 ## Checking changes

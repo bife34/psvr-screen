@@ -3,38 +3,16 @@
 Uses yt-dlp. YouTube marks spherical formats in the format note: "2160s" (s = spherical), "equi" (the usual
 360° picture, equirectangular) or "mesh" (YouTube's cube layout, see render/video_sphere.py). Many "VR"
 videos are uploaded as normal flat videos holding two pictures side by side (made for phone VR viewers):
-those are recognised by their title and shown on a big screen ("screen").
-
-Stereo 3D isn't marked anywhere: two frames are looked at - if their left and right halves (or top and
-bottom) show the same details, it is 3D. Only the middle of each half is compared (the edges often hold
-mirrored lens masks), allowing a small sideways shift (each eye sees things a little shifted), and only fine
-detail counts (the eyes' pictures can differ in brightness). Everything can be changed in the player.
+those are recognised by their title and the picture (recognize.py) and shown on a screen or a dome.
 """
 import re
-from dataclasses import dataclass
 
-import numpy as np
+from . import recognize
+from .info import VideoInfo, look_at_frames
 
 WATCH_URL = re.compile(r"(?:youtube\.com/(?:watch\?(?:\S*&)?v=|shorts/|live/)|youtu\.be/)([\w-]{11})")
 MAX_PIXELS = 3840 * 2160 * 1.1      # picture size the player decodes smoothly (4K, or 2880x2880 3D)
 CODEC_PREFERENCE = ("vp9", "vp09", "avc1", "av01")   # VP9 decodes fastest here; AV1 is the slowest
-VR_TITLE = re.compile(r"\b(vr|3d|sbs|180|360|stereoscopic)\b", re.IGNORECASE)
-SAME_PICTURE = 0.3               # halves whose details correlate this much hold the same picture (3D);
-                                 # measured: 3D 0.45-0.92, normal videos below 0.05
-LOOK_AT = (0.2, 0.5)             # the frames looked at, as part of the video's length
-
-
-@dataclass
-class VideoInfo:
-    video_id: str
-    title: str
-    video_url: str
-    audio_url: str           # None if the video has no separate sound stream
-    projection: str          # "equi" (360°), "equi180" (180°), "mesh" (YouTube's cube layout) or "screen"
-    stereo: str              # "mono", "top_bottom" or "side_by_side"
-    width: int
-    height: int
-    duration: float          # seconds (0 = unknown, e.g. live)
 
 
 def video_id(url):
@@ -69,80 +47,17 @@ def _codec_rank(fmt):
     return -next((i for i, c in enumerate(CODEC_PREFERENCE) if codec.startswith(c)), len(CODEC_PREFERENCE))
 
 
-def guess_stereo(projection, width, height):
-    """Without a frame to look at: two pictures stacked make a picture twice as tall as one."""
-    aspect = height / max(width, 1)
-    single = {"equi": 0.5, "mesh": 2 / 3}.get(projection)   # 360° picture 2:1, cube layout 3:2
-    return "top_bottom" if single and aspect > single * 1.5 else "mono"
-
-
-def _similar(a, b):
-    a, b = a - a.mean(), b - b.mean()
-    norm = np.sqrt((a * a).sum() * (b * b).sum())
-    return float((a * b).sum() / norm) if norm else 0.0
-
-
-def _blocks(a, n):
-    """Average of n x n pixel blocks (a smaller picture)."""
-    h, w = a.shape[0] // n * n, a.shape[1] // n * n
-    return a[:h, :w].reshape(h // n, n, w // n, n).mean(axis=(1, 3))
-
-
-def _detail(a, k=5):
-    """Fine detail only: the picture minus a blurred copy of itself."""
-    s = 2 * k + 1
-    c = np.pad(np.cumsum(np.cumsum(np.pad(a, k, mode="edge"), 0), 1), ((1, 0), (1, 0)))
-    blur = (c[s:, s:] - c[:-s, s:] - c[s:, :-s] + c[:-s, :-s]) / (s * s)
-    return a - blur[:a.shape[0], :a.shape[1]]
-
-
-def _same_picture(a, b):
-    """How much two halves show the same details (-1..1), see the module doc."""
-    n = max(1, min(a.shape) // 96)
-    a, b = _detail(_blocks(a, n)), _detail(_blocks(b, n))
-    w = a.shape[1]
-    m0, m1 = w // 5, w - w // 5
-    return max(_similar(a[:, m0:m1], b[:, m0 + s:m1 + s])
-               for s in range(-(w // 16), w // 16 + 1) if m0 + s >= 0 and m1 + s <= w)
-
-
-def stereo_scores(y):
-    """(side by side, top / bottom) similarity of a frame's brightness plane (2D array)."""
-    y = y.astype(np.float32)
-    h, w = y.shape
-    return (_same_picture(y[:, :w // 2], y[:, w // 2:w // 2 * 2]),
-            _same_picture(y[:h // 2], y[h // 2:h // 2 * 2]))
-
-
-def _look_at_frames(url, duration):
-    """Stereo layout from frames a bit into the video (the start is often a black title)."""
-    import av
-    scores = []
-    container = av.open(url, timeout=20)
-    try:
-        for part in LOOK_AT if duration > 20 else (0,):
-            if part:
-                container.seek(int(duration * part * 1_000_000))
-            frame = next(container.decode(container.streams.video[0]))
-            scores.append(stereo_scores(frame.to_ndarray(format="gray")))
-    finally:
-        container.close()
-    side, stacked = np.mean(scores, axis=0)
-    if max(side, stacked) < SAME_PICTURE:
-        return "mono"
-    return "side_by_side" if side >= stacked else "top_bottom"
-
-
 def probe(vid):
     """VideoInfo for a YouTube video id if it is a VR video, else None. Slow (a few seconds): call it from a
     background thread. Raises on network / YouTube errors."""
     import yt_dlp   # slow to import: only when needed
     with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True}) as ydl:
         info = ydl.extract_info("https://www.youtube.com/watch?v=" + vid, download=False)
+    title = info.get("title") or "Video"
     formats = info.get("formats") or []
     candidates = [f for f in formats if _decodable(f) and _projection(f)]
     if not candidates:
-        if not VR_TITLE.search(info.get("title") or ""):
+        if not recognize.looks_vr(title):
             return None
         candidates = [f for f in formats if _decodable(f)]   # a flat video made for VR viewers
         if not candidates:
@@ -154,16 +69,21 @@ def probe(vid):
     sounds = [f for f in formats if (f.get("vcodec") or "none") == "none" and (f.get("acodec") or "none") != "none"
               and f.get("protocol") == "https"]
     audio = max(sounds, key=lambda f: f.get("abr") or 0) if sounds else None
-    projection = _projection(video) or "screen"
-    w, h = video.get("width") or 0, video.get("height") or 0
     duration = float(info.get("duration") or 0)
+    marked = _projection(video)                      # what YouTube says beats everything
+    tags = recognize.from_tags(title)
     try:
-        stereo = _look_at_frames(video["url"], duration)
+        picture = look_at_frames(video["url"], duration)
     except Exception:
-        stereo = guess_stereo(projection, w, h)
-    if projection == "screen" and stereo == "mono":
-        return None                      # "VR" in the title, but just a normal video
-    if projection == "equi" and stereo == "side_by_side":
-        projection = "equi180"           # VR180: two half-spheres side by side
-    return VideoInfo(vid, info.get("title") or "Video", video["url"], audio["url"] if audio else None,
-                     projection, stereo, w, h, duration)
+        picture = recognize.Layout()
+    # The picture decides 3D and fisheye; flat 3D uploads with square halves are usually made for phone
+    # viewers (a screen), not VR180 - that needs YouTube's mark or a "180" in the title.
+    layout = tags.merged(recognize.Layout("fisheye" if picture.projection == "fisheye" else None, picture.stereo))
+    stereo = layout.stereo or "mono"
+    projection = marked or layout.projection or ("screen" if stereo != "mono" else None)
+    if projection is None:
+        return None                                  # "VR" in the title, but just a normal video
+    if projection == "equi" and stereo == "side_by_side" and marked != "mesh":
+        projection = "equi180"                       # VR180: two half-spheres side by side
+    return VideoInfo(vid, title, projection, stereo, video_url=video["url"], audio_url=audio["url"] if audio else None,
+                     duration=duration, fov=layout.fov)

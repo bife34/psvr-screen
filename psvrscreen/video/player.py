@@ -15,11 +15,11 @@ import time
 
 import av
 
+from .info import open_options
+
 AUDIO_RATE = 48000
 VIDEO_QUEUE = 8                    # decoded frames waiting (~0.15-0.3 s)
 AUDIO_BUFFER_SECONDS = 1.5
-HTTP_OPTIONS = {"reconnect": "1", "reconnect_streamed": "1", "reconnect_on_network_error": "1",
-                "reconnect_delay_max": "5", "rw_timeout": "15000000"}
 
 
 class Frame:
@@ -35,8 +35,9 @@ class Frame:
 
 
 class VideoPlayer:
-    def __init__(self, video_url, audio_url=None, duration=0.0, start=0.0):
+    def __init__(self, video_url, audio_url=None, duration=0.0, start=0.0, headers=None):
         self.duration = duration
+        self._options = open_options(headers)
         self.error = None
         self.ended = False
         self._urls = (video_url, audio_url)
@@ -161,7 +162,7 @@ class VideoPlayer:
         """Decode `url` from the current seek target on; `handle(frame, target, generation)` per frame.
         Seeks restart it at the new target. The leader (picture) starts at the keyframe before the target and
         makes that the start; the other one waits for it, then starts there exactly."""
-        container = av.open(url, options=HTTP_OPTIONS, timeout=20)
+        container = av.open(url, options=self._options, timeout=20)
         try:
             stream = open_stream(container)
             while not self._stop:

@@ -10,7 +10,8 @@ SIDE_WIDTH = int(theme.BAR * 3.4)
 
 
 class Dock(View):
-    """Settings, Recenter, Apps, Add window | one tab per window (click: show / select, x: close) | Mouse -> PC"""
+    """Settings, Recenter, Apps, Add window, Videos | one tab per window (click: show / select, x: close) |
+    Mouse -> PC"""
 
     def __init__(self, shell):
         super().__init__(distance=DOCK_DISTANCE)
@@ -45,13 +46,14 @@ class Dock(View):
                     side("recenter", Icon.RECENTER, "Recenter"),
                     side("apps", Icon.APPS, "Apps"),
                     side("add_window", Icon.ADD, "Add window"),
+                    side("videos", Icon.VIDEO, "Videos"),
                     *tabs,
                     side("mouse_to_pc", Icon.MOUSE, "Mouse → PC")],
                    gap=8, pad=6, h=theme.BAR, bg=theme.BG)
 
 
 class Player(View):
-    """What's playing (title · artist) and previous / play-pause / next."""
+    """What's playing (title · artist), previous / play-pause / next, and x to hide the row."""
 
     def __init__(self, shell):
         super().__init__(distance=DOCK_DISTANCE)
@@ -80,5 +82,7 @@ class Player(View):
                     info,
                     button("previous", Icon.PREVIOUS),
                     button("play_pause", Icon.PAUSE if playing and playing["playing"] else Icon.PLAY),
-                    button("next", Icon.NEXT)],
-                   w=h * 9, h=h, gap=4, bg=theme.BG)
+                    button("next", Icon.NEXT),
+                    Button("hide", icon=Icon.CLOSE, w=int(h * 0.75), h=h - 12, size=theme.SMALL - 6, style="danger",
+                           on_click=self.shell.dismiss_media)],
+                   w=h * 9 + int(h * 0.75) + 4, h=h, gap=4, bg=theme.BG)

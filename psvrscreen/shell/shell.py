@@ -16,6 +16,7 @@ from ..core import geometry
 from ..core.settings import new_panel
 from ..scene.surface import INTERFACE, OVERLAY, Surface
 from ..win import displays, start_apps, windows
+from ..video import files
 from ..win.media import MediaWatcher
 from . import workspace
 from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
@@ -120,6 +121,10 @@ class Shell:
         self.video_detector = VideoDetector()
         self.watch_buttons = {}                  # hwnd -> WatchButton (browser windows showing a VR video)
         self.video = None                        # ImmersiveVideo while one plays
+        self.dismissed_videos = set()            # video ids whose "Watch in VR" was closed with its x
+        self.dismissed_media = None              # title of the paused media whose player row was closed
+        self.video_files = None                  # [(label, path)] for the Videos dialog (None: still looking)
+        self._opened_file = None                 # a video file's VideoInfo, ready to play (from a thread)
 
     # -- lifetime --------------------------------------------------------------------------------
     def start(self):
@@ -171,6 +176,10 @@ class Shell:
             self._adopt_new_windows(s)
             s = self._settings = self.store.get()
             self._find_browser_videos(s)
+        if self._opened_file is not None:   # read in the background: start it here, on the render thread
+            info, self._opened_file = self._opened_file, None
+            self.stop_video()
+            self.video = ImmersiveVideo(self, info, None)
         if self.video is not None:
             return self.video.surfaces(now)
         surfaces = []
@@ -252,7 +261,7 @@ class Shell:
     def _watch_button(self, p, window):
         """"Watch in VR" under a browser window that shows a VR video."""
         hwnd = getattr(window.content, "hwnd", None)
-        if hwnd not in self.video_detector.found:
+        if hwnd not in self._watchable():
             return []
         button = self._watch_view(hwnd, p["distance"], False)
         s = window.surface
@@ -280,15 +289,19 @@ class Shell:
         out.append(Surface("dock", dock_model, self.dock.width, self.dock.height, texture=self.dock.texture,
                            layer=INTERFACE, target=self.dock, data={"ui": True}))
         if self.dialog is None:   # the player makes room for dialogs
-            self.player.refresh()
-            model = dock_model @ geometry.translate(0, self.dock.height / 2 + 0.02 + self.player.height / 2, 0)
-            out.append(Surface("player", model, self.player.width, self.player.height,
-                               texture=self.player.texture, layer=INTERFACE, target=self.player, data={"ui": True}))
+            model = dock_model @ geometry.translate(0, self.dock.height / 2, 0)
+            if self._player_shown():
+                self.player.refresh()
+                model = model @ geometry.translate(0, 0.02 + self.player.height / 2, 0)
+                out.append(Surface("player", model, self.player.width, self.player.height,
+                                   texture=self.player.texture, layer=INTERFACE, target=self.player,
+                                   data={"ui": True}))
+                model = model @ geometry.translate(0, self.player.height / 2, 0)
             in_vr = {getattr(w.content, "hwnd", None) for w in self.windows.values()}
-            outside = [h for h in self.video_detector.found if h not in in_vr]
+            outside = [h for h in self._watchable() if h not in in_vr]
             if outside:   # a VR video in a browser on the main screen: offer it above the player
                 button = self._watch_view(outside[0], DOCK_DISTANCE, True)
-                model = model @ geometry.translate(0, self.player.height / 2 + 0.02 + button.height / 2, 0)
+                model = model @ geometry.translate(0, 0.02 + button.height / 2, 0)
                 out.append(Surface("watch-main", model, button.width, button.height, texture=button.texture,
                                    layer=INTERFACE, target=button, data={"ui": True}))
         else:
@@ -296,8 +309,31 @@ class Shell:
             out.append(Surface("dialog", geometry.translate(0, 0, -DIALOG_DISTANCE), self.dialog.width,
                                self.dialog.height, texture=self.dialog.texture, layer=INTERFACE, target=self.dialog,
                                data={"ui": True}))
-        self._release_watch_buttons(keep=self.video_detector.found)
+        self._release_watch_buttons(keep=self._watchable())
         return out
+
+    def _watchable(self):
+        """{hwnd: VideoInfo} of the VR videos in browsers whose "Watch in VR" wasn't closed."""
+        return {h: info for h, info in self.video_detector.found.items() if info.key not in self.dismissed_videos}
+
+    def _player_shown(self):
+        """The music player row, unless closed with its x (it comes back when something plays)."""
+        playing = self.media.now_playing
+        if self.dismissed_media is None:
+            return True
+        if playing and (playing["playing"] or playing["title"] != self.dismissed_media):
+            self.dismissed_media = None
+            return True
+        return False
+
+    def dismiss_video(self, hwnd):
+        info = self.video_detector.found.get(hwnd)
+        if info is not None:
+            self.dismissed_videos.add(info.key)
+
+    def dismiss_media(self):
+        playing = self.media.now_playing
+        self.dismissed_media = playing["title"] if playing else ""
 
     def overlay(self):
         """Pointer dot and zoom lens, after the pointer handled this frame's input."""
@@ -373,6 +409,8 @@ class Shell:
                                                          "Loading apps..."))
         elif action == "add_window":
             self._open_dialog("add", self._add_window_dialog)
+        elif action == "videos":
+            self._open_dialog("videos", self._videos_dialog)
 
     def _open_dialog(self, kind, make):
         opening = getattr(self.dialog, "kind", None) != kind
@@ -395,6 +433,28 @@ class Shell:
                     for k in displays.view_kinds() if k not in in_use]
         entries.append(("Main monitor (whole screen - for videos, not for reading)", ("view", "main")))
         return ListDialog("Add a window to VR", lambda: entries, self._pick, "No other open windows")
+
+    def _videos_dialog(self):
+        """Video files in Downloads / Videos / Desktop, newest first (looked up in the background)."""
+        def find():
+            self.video_files = [(files.describe(*v), v[0]) for v in files.list_videos()]
+
+        self.video_files = None
+        threading.Thread(target=find, daemon=True, name="find-videos").start()
+        return ListDialog("Videos on this PC  (Downloads, Videos, Desktop)", lambda: self.video_files or [],
+                          self._watch_file, "Looking for videos..." if self.video_files is None
+                          else "No videos in Downloads, Videos or Desktop")
+
+    def _watch_file(self, path):
+        self._close_dialog()
+
+        def read():
+            try:
+                self._opened_file = files.probe(path)
+            except Exception:
+                pass
+
+        threading.Thread(target=read, daemon=True, name="open-video").start()
 
     def _pick(self, choice):
         if choice[0] == "window":
@@ -435,7 +495,7 @@ class Shell:
     # -- VR videos -----------------------------------------------------------------------------------
     def _find_browser_videos(self, s):
         """Tell the detector which windows are browsers on YouTube (checked once a second)."""
-        self.video_detector.candidates = [hwnd for hwnd, title, exe in windows.list_open_windows()
+        self.video_detector.candidates = [(hwnd, title) for hwnd, title, exe in windows.list_open_windows()
                                           if is_browser_video(exe, title)]
 
     def watch_video(self, hwnd):
@@ -443,10 +503,11 @@ class Shell:
         if info is None:
             return
         self.stop_video()
-        self.media.command("pause")      # the browser stops playing it
+        if info.source == "stream":
+            self.media.command("pause")  # the browser stops playing it (a window source keeps playing there)
         self.settings_open.clear()
         self._close_dialog()
-        self.video = ImmersiveVideo(self, info)
+        self.video = ImmersiveVideo(self, info, hwnd)
 
     def stop_video(self):
         """Back to the windows. Render thread (frees the video picture)."""

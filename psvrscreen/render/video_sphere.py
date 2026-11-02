@@ -9,10 +9,14 @@ direction in the video's layout:
   equi180  the same for the half in front of you (VR180)
   mesh     YouTube's cube layout (equi-angular cubemap): 3 x 2 cube faces - top row left, front, right;
            bottom row down, back, up, turned on their side. Found by fitting a real YouTube frame.
+  fisheye  round pictures from fisheye lenses (190° - 220°): the angle from straight ahead grows evenly
+           from the middle of the circle to its edge (equidistant)
   screen   a screen in front of you (videos made for phone VR viewers): a real panel at the distance, as
            wide as `screen_degrees` - farther away it is bigger, so it always looks the same size. Flat, or
            bent like a window (curve 1 = around you: every point as far away)
 3D videos hold one picture per eye, stacked (top = left eye) or side by side (left = left eye).
+The picture is a video frame (YUV planes) or a browser window's picture (BGRA, maybe with black borders
+around the video: `crop` is the part that holds it).
 
 Viewer adjustments: size (the whole video bigger / smaller around you), brightness, and "move away": the
 video goes away from you like a real object and gets smaller. You stay in the middle: a 180° / 360° dome
@@ -43,7 +47,10 @@ FS = """
 in vec3 v_dir;
 in vec2 v_uv;             // screen: the place on the screen's picture
 uniform sampler2D tex_y, tex_u, tex_v;
-uniform int projection;   // 0 equi, 1 equi180, 2 mesh, 3 screen
+uniform int projection;   // 0 equi, 1 equi180, 2 mesh, 3 screen, 4 fisheye
+uniform float fisheye_fov; // radians the fisheye lens sees
+uniform int rgb;          // 1: tex_y holds the colors (a window's picture), 0: Y / U / V planes
+uniform vec4 crop;        // the part of the picture that holds the video: x0, y0, x1, y1
 uniform int stereo;       // 0 mono, 1 top / bottom, 2 side by side
 uniform int eye;          // 0 left, 1 right
 uniform float opacity;
@@ -85,6 +92,12 @@ void main() {
     }
     if (projection == 3) {
         uv = v_uv;
+    } else if (projection == 4) {
+        float theta = acos(clamp(d.z, -1.0, 1.0));
+        if (theta > fisheye_fov * 0.5) { color = BLACK * opacity; return; }
+        float r = theta / fisheye_fov;            // 0 in the middle, 0.5 at the circle's edge
+        float phi = atan(d.y, d.x);
+        uv = vec2(0.5 + r * cos(phi), 0.5 - r * sin(phi));
     } else if (projection == 2) {
         uv = cube(d);
     } else if (projection == 1) {
@@ -95,6 +108,8 @@ void main() {
     }
     if (stereo == 1) uv.y = uv.y * 0.5 + 0.5 * float(eye);
     else if (stereo == 2) uv.x = uv.x * 0.5 + 0.5 * float(eye);
+    uv = mix(crop.xy, crop.zw, uv);
+    if (rgb == 1) { color = vec4(clamp(texture(tex_y, uv).rgb * brightness, 0.0, 1.0), opacity); return; }
     // BT.709, video range
     float y = (texture(tex_y, uv).r - 16.0 / 255.0) * (255.0 / 219.0);
     float cb = (texture(tex_u, uv).r - 0.5) * (255.0 / 224.0);
@@ -103,7 +118,7 @@ void main() {
     color = vec4(clamp(rgb * brightness, 0.0, 1.0), opacity);
 }
 """
-PROJECTIONS = {"equi": 0, "equi180": 1, "mesh": 2, "screen": 3}
+PROJECTIONS = {"equi": 0, "equi180": 1, "mesh": 2, "screen": 3, "fisheye": 4}
 STEREO = {"mono": 0, "top_bottom": 1, "side_by_side": 2}
 
 
@@ -144,6 +159,7 @@ class VideoTexture:
         self.ids = GL.glGenTextures(3)
         self._buffers = GL.glGenBuffers(3)
         self.size = None
+        self.rgb = False          # holding a window's picture (colors in the first texture)
 
     @property
     def ready(self):
@@ -171,7 +187,27 @@ class VideoTexture:
             GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, w, h, GL.GL_RED, GL.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
         GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
         GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 4)
-        self.size = (frame.width, frame.height)
+        self.size, self.rgb = (frame.width, frame.height), False
+
+    def upload_bgra(self, image):
+        """A window's picture: (h, w, 4) BGRA uint8."""
+        image = np.ascontiguousarray(image)
+        h, w = image.shape[:2]
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self.ids[0])
+        if self.size != (w, h) or not self.rgb:
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA8, w, h, 0, GL.GL_BGRA, GL.GL_UNSIGNED_BYTE, None)
+            for name, value in ((GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR), (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
+                                (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE), (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)):
+                GL.glTexParameteri(GL.GL_TEXTURE_2D, name, value)
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, self._buffers[0])
+        GL.glBufferData(GL.GL_PIXEL_UNPACK_BUFFER, image.nbytes, None, GL.GL_STREAM_DRAW)
+        target = GL.glMapBufferRange(GL.GL_PIXEL_UNPACK_BUFFER, 0, image.nbytes,
+                                     GL.GL_MAP_WRITE_BIT | GL.GL_MAP_INVALIDATE_BUFFER_BIT)
+        ctypes.memmove(target, image.ctypes.data, image.nbytes)
+        GL.glUnmapBuffer(GL.GL_PIXEL_UNPACK_BUFFER)
+        GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, w, h, GL.GL_BGRA, GL.GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+        GL.glBindBuffer(GL.GL_PIXEL_UNPACK_BUFFER, 0)
+        self.size, self.rgb = (w, h), True
 
     def bind(self):
         for unit, tex in enumerate(self.ids):
@@ -188,8 +224,8 @@ class VideoTexture:
 class VideoSphere:
     """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = where the
     video's front is, data = {"projection", "stereo", "distance", "screen_degrees", "screen_curve", "size",
-    "brightness", "move_away", "place" (right, up, forward)}). Screen videos are drawn on a panel instead of
-    the sphere."""
+    "brightness", "move_away", "place" (right, up, forward), "fov" (fisheye, degrees), "crop"}). Screen videos
+    are drawn on a panel instead of the sphere."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -208,8 +244,12 @@ class VideoSphere:
         prog.int("stereo", STEREO.get(surface.data.get("stereo"), 0))
         data = surface.data
         prog.int("eye", eye)
+        prog.int("rgb", 1 if surface.texture.rgb else 0)
+        prog.float("crop", *data.get("crop", (0.0, 0.0, 1.0, 1.0)))
+        prog.float("fisheye_fov", float(np.radians(data.get("fov", 190.0))))
         prog.float("brightness", data.get("brightness", 1.0))
-        w, h = surface.texture.size
+        x0, y0, x1, y1 = data.get("crop", (0.0, 0.0, 1.0, 1.0))
+        w, h = surface.texture.size[0] * (x1 - x0), surface.texture.size[1] * (y1 - y0)
         stereo = surface.data.get("stereo")
         eye_aspect = (h / (w / 2)) if stereo == "side_by_side" else (h / 2 / w) if stereo == "top_bottom" else h / w
         distance = data.get("distance", 10.0)
