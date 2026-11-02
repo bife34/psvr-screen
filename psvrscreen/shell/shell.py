@@ -27,6 +27,7 @@ from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
 from .dialogs import DIALOG_DISTANCE, MENU_DISTANCE, ContextMenu, GlobalSettings, ListDialog
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT, Dock, Player
 from .home import Home
+from .motion import Motion
 from .pointer import Pointer
 from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_video
 
@@ -87,6 +88,7 @@ class _Window:
     def __init__(self, content, shell, window_id):
         self.content = content
         self.bar = TitleBar(shell, window_id)
+        self.bar_target = _Lingering(shell, window_id, self.bar)   # one for good (animations know it by it)
         self.card = SettingsCard(shell, window_id, CARD_DISTANCE)
         self.target = _WindowTarget(shell, window_id)
         self.surface = None
@@ -136,6 +138,7 @@ class Shell:
         self.zoomed = set()                      # window ids with the zoom lens on
         self.gesture = None                      # WindowMove / WindowBend in progress
         self.dialog = None                       # the open dialog view (one at a time)
+        self.motion = Motion()                   # open / close animations
         self.menu = None                         # the open right-click menu, and where it is
         self._menu_model = None
         self.dock = Dock(self)
@@ -173,6 +176,8 @@ class Shell:
         for wid in list(self.windows):
             self._drop(wid)
         self._close_dialog()
+        self.close_menu()
+        self.motion.flush()          # frees what waited for its fade-out (the GL context is still current)
         for view in (self.dock, self.player):
             view.release()
         self.gesture = None
@@ -199,7 +204,11 @@ class Shell:
 
     # -- every frame -------------------------------------------------------------------------------
     def update(self, now):
-        """Bring windows and interface up to date; returns this frame's surfaces (without the overlay)."""
+        """Bring windows and interface up to date; returns this frame's surfaces (without the overlay),
+        animated as they come and go."""
+        return self.motion.apply(self._surfaces(now), now)
+
+    def _surfaces(self, now):
         self._settings = s = self.store.get()
         self._sync_windows(s)
         if now - self._adopt_checked > 1.0:
@@ -281,7 +290,7 @@ class Shell:
         s = window.surface
         model = s.model @ geometry.translate(0, s.height / 2 + bar.height / 2, 0)
         out.append(Surface("bar:" + wid, model, bar.width, bar.height, p["curvature"], texture=bar.texture,
-                           layer=INTERFACE, target=_Lingering(self, wid, bar), data={"ui": True}))
+                           layer=INTERFACE, target=window.bar_target, data={"ui": True}))
         if settings_open:
             card = window.card
             card.refresh()
@@ -464,7 +473,7 @@ class Shell:
 
     def _close_dialog(self):
         if self.dialog is not None:
-            self.dialog.release()
+            self.motion.later(self.dialog.release)   # after it faded out
             self.dialog = None
 
     def _add_window_dialog(self):
@@ -597,7 +606,7 @@ class Shell:
 
     def close_menu(self):
         if self.menu is not None:
-            self.menu.release()
+            self.motion.later(self.menu.release)
             self.menu = None
 
     def _menu_surfaces(self):
