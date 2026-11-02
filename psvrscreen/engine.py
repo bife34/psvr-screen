@@ -14,6 +14,7 @@ import math
 import os
 import threading
 import time
+import traceback
 
 import numpy as np
 
@@ -28,6 +29,7 @@ from .win import displays
 
 NECK = np.array([0.0, 0.075, -0.08])   # eyes sit above and in front of the neck pivot
 SNAPSHOT_SECONDS = 3.0
+ERROR_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "psvr-screen.log")
 
 
 class _RECT(ctypes.Structure):
@@ -43,6 +45,15 @@ def _keep_mouse_off_headset(enable, mouse_in_vr=False):
         ctypes.windll.user32.ClipCursor(ctypes.byref(rect))
     else:
         ctypes.windll.user32.ClipCursor(None)
+
+
+def _log_error():
+    """The full error goes to psvr-screen.log (next to the launcher) for finding the cause later."""
+    try:
+        with open(ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + traceback.format_exc() + "\n")
+    except OSError:
+        pass
 
 
 class DirectEngine(threading.Thread):
@@ -84,6 +95,7 @@ class DirectEngine(threading.Thread):
                     self.status = f"{e}. Retrying..."
                 except Exception as e:
                     self.status = f"Error: {str(e).splitlines()[0][:150]}. Retrying..."
+                    _log_error()
                 self.fps = 0.0
                 self._stop_event.wait(3)
         finally:
