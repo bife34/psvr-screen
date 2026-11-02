@@ -176,6 +176,65 @@ def prepare_views():
     place_vr_monitor_left_of_main()
 
 
+VIRTUAL_ADAPTER = "Virtual Display Driver"
+ENUM_REGISTRY_SETTINGS = -2
+CDS_NORESET = 0x10000000
+
+
+def _virtual_adapters():
+    """[(adapter name, attached to the desktop)] of the virtual monitors (also the ones turned off)."""
+    found, i = [], 0
+    while True:
+        adapter = _DISPLAY_DEVICE(cb=ctypes.sizeof(_DISPLAY_DEVICE))
+        if not user32.EnumDisplayDevicesW(None, i, ctypes.byref(adapter), 0):
+            return sorted(found, key=lambda a: _display_number(a[0]))
+        i += 1
+        if adapter.DeviceString == VIRTUAL_ADAPTER:
+            found.append((adapter.DeviceName, bool(adapter.StateFlags & 0x1)))
+
+
+def turn_off_virtual_monitors():
+    """The app quits: the invisible monitors go away, so Windows can't put (or later reopen) a window where
+    nobody sees it - it moves their windows to the main monitor itself."""
+    changed = False
+    for name, attached in _virtual_adapters():
+        if attached:
+            dm = _devmode(name) or _DEVMODE(dmSize=ctypes.sizeof(_DEVMODE))
+            dm.dmPelsWidth = dm.dmPelsHeight = dm.dmPositionX = dm.dmPositionY = 0
+            dm.dmFields = DM_POSITION | DM_PELSWIDTH | DM_PELSHEIGHT
+            user32.ChangeDisplaySettingsExW(name, ctypes.byref(dm), None, CDS_UPDATEREGISTRY | CDS_NORESET, None)
+            changed = True
+    if changed:
+        user32.ChangeDisplaySettingsExW(None, None, None, 0, None)
+        ensure_headset_hz()
+    return changed
+
+
+def turn_on_virtual_monitors():
+    """The app starts: the invisible monitors come back (left of the main one, their last size)."""
+    main = find("main")
+    x = main.left if main else 0
+    changed = False
+    for name, attached in _virtual_adapters():
+        if attached:
+            continue
+        dm = _DEVMODE()
+        dm.dmSize = ctypes.sizeof(_DEVMODE)
+        if not user32.EnumDisplaySettingsW(name, ENUM_REGISTRY_SETTINGS, ctypes.byref(dm)) or dm.dmPelsWidth == 0:
+            dm.dmPelsWidth, dm.dmPelsHeight = VIEW_MODE[:2]
+        x -= dm.dmPelsWidth
+        dm.dmPositionX, dm.dmPositionY = x, main.top if main else 0
+        dm.dmFields = DM_POSITION | DM_PELSWIDTH | DM_PELSHEIGHT
+        user32.ChangeDisplaySettingsExW(name, ctypes.byref(dm), None, CDS_UPDATEREGISTRY | CDS_NORESET, None)
+        changed = True
+    if changed:
+        user32.ChangeDisplaySettingsExW(None, None, None, 0, None)
+        set_vr_monitor_mode(*VR_MONITOR_MODE)   # Windows forgets a turned-off monitor's size and scaling
+        prepare_views()
+        ensure_headset_hz()
+    return changed
+
+
 def view_kinds():
     return [d.kind for d in list_displays() if d.kind.startswith("view")]
 
