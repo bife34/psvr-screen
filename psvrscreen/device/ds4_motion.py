@@ -1,14 +1,17 @@
-"""DS4 motion: aim the VR pointer by turning the controller (a laser from your hand).
+"""DS4 motion: aim the VR pointer with the controller (a laser from your hand, or just the dot).
 
 The DS4's gyro is read straight from the controller (HID, next to DS4Windows, which keeps doing the buttons
-through XInput - see gamepad.py). Click the touchpad: the laser comes on (the pointer goes into VR) where you
-look; click it again later to bring the pointer back to where you look. Turning the controller turns the
-pointer like a mouse does: relative, so it never drifts away.
+through XInput - see gamepad.py). Click the touchpad: the pointer comes into VR where you look, and the way the
+controller points right then becomes "there" - point it where you look and click to line them up.
+  Up / down is absolute: gravity tells how the controller is tilted, so the same tilt always means the same
+  height and the pointer can't creep up or down.
+  Left / right is relative (nothing tells the controller where "front" is): turning it turns the pointer;
+  slow drift is ignored and the touchpad click lines it up again.
 
-Measured on the user's DS4 v2: gyro is right-handed in the same frame as the accelerometer, 16 units per
-degree/second. Left / right = turning around "up" (whatever way you hold it: gravity says where up is);
-up / down = tilting around the controller's left-right axis.
+Measured on the user's DS4: gyro is right-handed in the same frame as the accelerometer, 16 units per
+degree/second; front up = + around the controller's own x axis.
 """
+import math
 import struct
 import threading
 import time
@@ -26,9 +29,12 @@ STILL_SPREAD = 4.0        # gyro units: readings this steady mean "still"
 STILL_SECONDS = 0.6       # this long still: calibrated (first time) / the rest value is refreshed
 BIAS_RATE = 0.01          # how fast a refreshed rest value is taken over
 SMOOTH = 0.05             # running average / spread of the readings
-# Slow drift (a hand sinking without you noticing) is ignored, faster turns go through fully.
+# Left / right: slow drift (a hand turning without you noticing) is ignored, faster turns go through fully.
 IGNORE_BELOW = 1.5        # degrees / second
 FULL_FROM = 5.0           # degrees / second
+# Up / down: the gyro follows quick tilts, gravity slowly corrects it (so it never drifts)
+GRAVITY_PULL = 0.01
+PITCH_STEP = 0.12         # degrees: smaller changes aren't sent (no jitter, no fight with the mouse)
 SEND_SECONDS = 0.008
 RETRY_SECONDS = 2.0
 TOUCHPAD_CLICK = 0x02
@@ -48,6 +54,7 @@ class DS4Motion(threading.Thread):
         self.store, self.engine = store, engine
         self.status = "DS4 laser: no DS4 found (press its PS button)"
         self._stop_event = threading.Event()
+        self._was_active = False
         self._reset()
 
     def _reset(self):
@@ -56,6 +63,9 @@ class DS4Motion(threading.Thread):
         self._spread = 100.0                    # running spread of the readings
         self._still_since = None
         self._up = np.array([0.0, 1.0, 0.0])
+        self._tilt = None                       # the controller's tilt (degrees, front up +)
+        self._anchor = None                     # (controller tilt, pointer pitch in degrees) lined up together
+        self._sent_pitch = None
 
     def stop(self):
         self._stop_event.set()
@@ -80,7 +90,7 @@ class DS4Motion(threading.Thread):
         self._reset()
         self.status = "DS4 laser: calibrating - put the DS4 down or hold it still a moment"
         try:
-            last, pending, sent, clicked = time.perf_counter(), [0.0, 0.0], time.perf_counter(), False
+            last, turned, sent, clicked = time.perf_counter(), 0.0, time.perf_counter(), False
             while not self._stop_event.is_set():
                 report = device.read(100, 200)
                 if not report:
@@ -95,16 +105,14 @@ class DS4Motion(threading.Thread):
                 dt, last = min(now - last, 0.05), now
                 gyro = np.array(struct.unpack_from("<3h", data, 12), np.float64)
                 accel = np.array(struct.unpack_from("<3h", data, 18), np.float64)
+                turned += self._turn(gyro, accel, dt, now)
                 click = bool(data[6] & TOUCHPAD_CLICK)
                 if click and not clicked:
                     self._to_look()
                 clicked = click
-                yaw, pitch = self._turn(gyro, accel, dt, now)
-                pending[0] += yaw
-                pending[1] += pitch
-                if now - sent >= SEND_SECONDS and (pending[0] or pending[1]):
-                    self._send(*pending)
-                    pending, sent = [0.0, 0.0], now
+                if now - sent >= SEND_SECONDS:
+                    self._send(turned)
+                    turned, sent = 0.0, now
         finally:
             device.close()
 
@@ -122,38 +130,58 @@ class DS4Motion(threading.Thread):
             return
         if self._bias is None:
             self._bias = self._mean.copy()
-            self.status = "DS4 laser: ready - click the touchpad to aim"
+            self.status = "DS4 laser: ready - point it where you look and click the touchpad"
         else:
             self._bias += (self._mean - self._bias) * BIAS_RATE
 
     def _turn(self, gyro, accel, dt, now):
-        """Degrees the controller turned left (+) and up (+) since the last report (0 until calibrated)."""
+        """Degrees the controller turned left (+) since the last report (0 until calibrated); keeps its tilt."""
         self._learn_rest(gyro, now)
         norm = np.linalg.norm(accel)
         if norm > 1000:
             self._up += (accel / norm - self._up) * 0.05      # gravity, smoothed: which way is up
             self._up /= np.linalg.norm(self._up)
         if self._bias is None:
-            return 0.0, 0.0
+            return 0.0
         rate = (gyro - self._bias) / UNITS_PER_DEGREE       # degrees / second
+        up = self._up
+        gravity_tilt = math.degrees(math.atan2(-up[2], math.hypot(up[0], up[1])))
+        if self._tilt is None:
+            self._tilt = gravity_tilt
+        self._tilt += rate[0] * dt + (gravity_tilt - self._tilt) * GRAVITY_PULL
         speed = np.linalg.norm(rate)
         rate *= min(1.0, max(0.0, (speed - IGNORE_BELOW) / (FULL_FROM - IGNORE_BELOW)))
-        return float(rate @ self._up) * dt, float(rate[0]) * dt
+        return float(rate @ up) * dt
 
-    def _send(self, yaw, pitch):
+    def _send(self, turned):
         s = self.store.get()
         pointer = getattr(self.engine, "pointer", None)
-        if not s.gyro_pointer or pointer is None or not pointer.active:
+        active = bool(s.gyro_pointer and pointer is not None and pointer.active)
+        if active and not self._was_active and self._tilt is not None:
+            self._anchor = (self._tilt, math.degrees(pointer.pitch))   # pointer came into VR: line up here
+        self._was_active = active
+        if not active or self._tilt is None:
             return
-        pointer.turn(yaw * s.gyro_speed, pitch * s.gyro_speed)
+        if turned:
+            pointer.turn(turned * s.gyro_speed, 0.0)
+        if self._anchor is None:
+            self._anchor = (self._tilt, math.degrees(pointer.pitch))
+        tilt0, pitch0 = self._anchor
+        pitch = pitch0 + (self._tilt - tilt0) * s.gyro_speed
+        if self._sent_pitch is None or abs(pitch - self._sent_pitch) >= PITCH_STEP:
+            pointer.aim_pitch(pitch)
+            self._sent_pitch = pitch
 
     def _to_look(self):
-        """Touchpad click: the pointer goes into VR if it isn't (the engine puts it where you look), else it
-        jumps to where you look."""
+        """Touchpad click: the pointer comes into VR (if it isn't) and goes where you look; the controller's tilt
+        right now means "where you look" from now on."""
         pointer = getattr(self.engine, "pointer", None)
         if pointer is None or not self.store.get().gyro_pointer:
             return
         if not pointer.enabled:
             pointer.enabled = True
         pointer.to_look()
+        if self._tilt is not None:
+            self._anchor = (self._tilt, math.degrees(pointer.look[1]))
+            self._sent_pitch = None
         pointer.laser_seen = time.monotonic()    # show the laser right away

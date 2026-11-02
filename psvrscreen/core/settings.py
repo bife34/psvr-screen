@@ -79,6 +79,7 @@ class Settings:
     mouse_speed: float = 1.0
     gyro_pointer: bool = True            # turn the DS4 to aim the VR pointer (a laser from your hand)
     gyro_speed: float = 1.0              # 1 = the pointer turns as much as the controller
+    laser_style: str = "fade"            # "beam" (hand to dot), "fade" (fades out on the way), "dot" (no beam)
     engine: str = "direct"      # "direct" = our own VR without SteamVR, "steamvr" = overlay in SteamVR
     # Lens fine-tuning for direct mode
     lens_fov: float = 95.0      # degrees across one eye's rendered image

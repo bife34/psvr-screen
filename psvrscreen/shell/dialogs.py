@@ -35,12 +35,19 @@ SETTINGS_SECTIONS = [
     ]),
     ("controls", "Controls", Icon.MOUSE, [
         ("slider", "mouse_speed", "Mouse speed", "{:.1f}x"),
-        ("toggle", "gyro_pointer", "Aim with the DS4 (laser)", None),
-        ("slider", "gyro_speed", "Laser speed", "{:.1f}x"),
         ("toggle", "auto_add_windows", "Apps opened from VR open in VR", None),
         ("toggle", "follow_head", "Windows follow my head", None),
         ("title", None, "Keyboard shortcuts", None),
         ("shortcuts", None, None, None),
+    ]),
+    ("ds4", "DS4 controller", Icon.GAMEPAD, [
+        ("toggle", "gyro_pointer", "Aim by moving the DS4", None),
+        ("slider", "gyro_speed", "Aiming speed", "{:.1f}x"),
+        ("choice", "laser_style", "Laser look", [("beam", "Full beam"), ("fade", "Fading"), ("dot", "Dot only")]),
+        ("title", None, "Line it up", None),
+        ("note", None, "Point the DS4 where you look and click its touchpad: the pointer jumps there, and that "
+                       "tilt means \"there\" from now on. Do it again whenever it feels off.", None),
+        ("note", None, "Put the DS4 down for a second after turning it on: it measures itself while still.", None),
     ]),
     ("privacy", "Privacy", Icon.PRIVATE, [
         ("toggle", "private_mode", "Private mode", None),
@@ -94,6 +101,12 @@ class GlobalSettings(View):
                                     h=theme.ROW - 8))
             elif kind == "environments":
                 rows.append(_environment_cards(s, store, w))
+            elif kind == "choice":
+                rows.append(Row([Label(label, size=theme.TEXT - 4, flex=1, indent=24)] +
+                                [Button(f"choice:{key}:{value}", text, h=theme.ROW - 12, style="flat",
+                                        selected=getattr(s, key) == value, size=theme.SMALL - 4,
+                                        on_click=lambda k=key, value=value: store.update(**{k: value}))
+                                 for value, text in fmt], w=w, h=theme.ROW, gap=6))
             elif kind == "slider":
                 lo, hi = LIMITS[key]
                 rows.append(Slider(key, label, getattr(s, key), lo, hi, fmt, w=w,

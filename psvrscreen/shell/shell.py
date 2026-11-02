@@ -42,7 +42,9 @@ CONTINUE_KEEP = 9
 LASER_SECONDS = 4.0              # the laser shows this long after the controller last aimed
 LASER_HAND = (0.12, -0.38, -0.22)  # where the beam starts: your right hand, from your eyes (m)
 LASER_WIDTH = 0.004
-LASER_COLOR = (0.45, 0.72, 1.0, 0.55)
+LASER_COLOR = (0.45, 0.72, 1.0, 0.6)
+LASER_FADE_PART = 0.55            # "fading beam": the part of the way it shows
+LASER_FADE_PIECES = 10
 LAUNCHED_FROM_VR_SECONDS = 20     # apps can take a while to show their window after launching
 LENS_SIZE, LENS_ZOOM = 0.38, 2.0  # zoom lens: width as part of the window, magnification
 POINTER_BLUE = (0.31, 0.61, 0.98, 1.0)
@@ -396,8 +398,9 @@ class Shell:
         face = (geometry.translate(*end) @ geometry.rotate_y(math.degrees(self.pointer.yaw))
                 @ geometry.rotate_x(math.degrees(self.pointer.pitch)))
         size = 0.012 * distance
-        if time.monotonic() - self.pointer.laser_seen < LASER_SECONDS:
-            out.append(_laser(end))
+        style = self._settings.laser_style
+        if style != "dot" and time.monotonic() - self.pointer.laser_seen < LASER_SECONDS:
+            out += _laser(end, fade=style == "fade", bright=self.pointer.pressing)
         out.append(Surface("dot", face @ geometry.scale(size), 1, 1, shape="disc", color=POINTER_BLUE, layer=OVERLAY))
         out.append(Surface("dot-center", face @ geometry.translate(0, 0, 0.001) @ geometry.scale(size * 0.55), 1, 1,
                            shape="disc", color=(1.0, 1.0, 1.0, 1.0), layer=OVERLAY))
@@ -778,9 +781,8 @@ class Shell:
         self._known_windows = set(current)
 
 
-def _laser(end):
-    """The laser: a thin beam from your right hand (low, in front of you) to the pointer dot, turned to face you."""
-    start = np.array(LASER_HAND)
+def _beam(key, start, end, width, color):
+    """A thin flat strip from start to end, turned to face your eyes."""
     along = end - start
     length = float(np.linalg.norm(along))
     y = along / length
@@ -791,7 +793,26 @@ def _laser(end):
     z = np.cross(x, y)
     model = np.eye(4, dtype=np.float32)
     model[:3, 0], model[:3, 1], model[:3, 2], model[:3, 3] = x, y, z, middle
-    return Surface("laser", model, LASER_WIDTH, length, color=LASER_COLOR, layer=OVERLAY)
+    return Surface(key, model, width, length, color=color, layer=OVERLAY)
+
+
+def _laser(end, fade=False, bright=False):
+    """The laser from your right hand (low, in front of you) to the pointer dot: a glow with a bright core.
+    fade: it fades out on the way (only the start shows the direction). bright: a button is held."""
+    start = np.array(LASER_HAND)
+    r, g, b, a = LASER_COLOR
+    a = min(1.0, a * (1.6 if bright else 1.0))
+    if not fade:
+        return [_beam("laser-glow", start, end, LASER_WIDTH * 3, (r, g, b, a * 0.25)),
+                _beam("laser", start, end, LASER_WIDTH, (r, g, b, a))]
+    out = []
+    for i in range(LASER_FADE_PIECES):               # pieces along the first part, each fainter
+        t0, t1 = i / LASER_FADE_PIECES * LASER_FADE_PART, (i + 1) / LASER_FADE_PIECES * LASER_FADE_PART
+        k = 1.0 - i / LASER_FADE_PIECES
+        p0, p1 = start + (end - start) * t0, start + (end - start) * t1
+        out.append(_beam(f"laser-glow{i}", p0, p1, LASER_WIDTH * 3, (r, g, b, a * 0.25 * k)))
+        out.append(_beam(f"laser{i}", p0, p1, LASER_WIDTH, (r, g, b, a * k)))
+    return out
 
 
 class _SceneGrab:

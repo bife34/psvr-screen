@@ -117,6 +117,15 @@ class Pointer:
         """The controller turned (DS4 motion): the pointer turns with it."""
         self._events.put(("turn", left_degrees, up_degrees))
 
+    def aim_pitch(self, degrees):
+        """The controller's tilt: the pointer's height, absolute (DS4 motion)."""
+        self._events.put(("pitch", degrees))
+
+    @property
+    def pressing(self):
+        """A button is held (something is being pressed or dragged)."""
+        return self._captured is not None
+
     def to_look(self):
         """Put the pointer where you look (DS4 touchpad click)."""
         self._events.put(("to_look",))
@@ -151,6 +160,10 @@ class Pointer:
             elif kind == "turn":
                 self.yaw += math.radians(event[1])
                 self.pitch = max(-1.4, min(1.4, self.pitch + math.radians(event[2])))
+                self.laser_seen = time.monotonic()
+                moved = True
+            elif kind == "pitch":
+                self.pitch = max(-1.4, min(1.4, math.radians(event[1])))
                 self.laser_seen = time.monotonic()
                 moved = True
             elif kind == "to_look":
