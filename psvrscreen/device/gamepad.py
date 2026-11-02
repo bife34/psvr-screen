@@ -112,6 +112,10 @@ class GamepadMouse(threading.Thread):
                 self.status = "No controller found (connect the DS4 / start DS4Windows)"
                 prev = 0
                 continue
+            if getattr(self.engine, "handover", False):     # SteamVR has the headset: the pad is the game's
+                self.status = f"Controller {pad_index + 1}: in use by SteamVR"
+                prev = 0
+                continue
             g = state.Gamepad
             buttons = g.wButtons
             pressed = buttons & ~prev

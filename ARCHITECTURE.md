@@ -69,7 +69,7 @@ goes back to the main screen until the next session.
 | Videos app (library grid: Recent, drives) | `apps/videos.py` (Library)   |
 | Photos app (grid, viewer, 360° photos)   | `apps/photos.py`              |
 | Files app (folders, drives, any file)    | `apps/files.py`               |
-| Games (Steam library, big-screen play)   | `win/games.py`, `apps/games.py` |
+| Games (Steam library, big screen or SteamVR) | `win/games.py`, `apps/games.py`, `win/steamvr.py` |
 | Surroundings (360° scenes around you)   | `render/environment.py`, `environments/` |
 | Thumbnails (background, disk cache)      | `video/thumbs.py`             |
 | Home launcher                            | `shell/home.py`               |

@@ -179,7 +179,7 @@ class DS4Motion(threading.Thread):
         if pointer is None or not self.store.get().gyro_pointer:
             return
         shell = getattr(self.engine, "shell", None)
-        if shell is not None and shell.game_in_front():
+        if getattr(self.engine, "handover", False) or (shell is not None and shell.game_in_front()):
             return                                 # the touchpad is the game's while you play
         if not pointer.enabled:
             pointer.enabled = True

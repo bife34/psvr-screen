@@ -25,7 +25,7 @@ from .device.tracking import q_to_matrix, yaw_pitch
 from .render.headset import QUALITY_SCALES, HeadsetDisplay, HeadsetError
 from .render.renderer import Renderer
 from .shell.shell import Shell
-from .win import displays, windows
+from .win import displays, steamvr, windows
 
 NECK = np.array([0.0, 0.075, -0.08])   # eyes sit above and in front of the neck pivot
 SNAPSHOT_SECONDS = 3.0
@@ -56,6 +56,9 @@ class DirectEngine(threading.Thread):
         self.straight_view = bool(os.environ.get("PSVR_STRAIGHT_VIEW"))
         self.snapshot_path = os.environ.get("PSVR_SNAPSHOT")
         self.shell = Shell(store, self.recenter)
+        self.shell.to_steamvr = self.give_to_steamvr
+        self.handover = False        # SteamVR has the headset (VR games); the control panel brings it back
+        self._after_letting_go = None
         self.pointer = self.shell.pointer
         # Read by the control panel
         self.status = "Starting..."
@@ -73,6 +76,21 @@ class DirectEngine(threading.Thread):
     def stop(self):
         self._stop_event.set()
 
+    # -- SteamVR (VR games) ----------------------------------------------------------------------------
+    def give_to_steamvr(self, then=None):
+        """Let go of the headset (windows back to the PC screen, the picture stops) so SteamVR can use it; then
+        call `then` (start SteamVR or a game). Any thread."""
+        self._after_letting_go = then
+        self.handover = True
+
+    def take_back(self):
+        """The control panel's "Open in VR again": close SteamVR if it's still running, then the VR comes back.
+        Blocks while SteamVR closes - call it from a background thread."""
+        if steamvr.running():
+            self.status = "Closing SteamVR..."
+            steamvr.close()
+        self.handover = False
+
     def recenter(self):
         """Make where you look "straight ahead" (any thread)."""
         self._recenter_event.set()
@@ -81,6 +99,9 @@ class DirectEngine(threading.Thread):
         self.shell.start()
         try:
             while not self._stop_event.is_set():
+                if self.handover:
+                    self._let_go()
+                    continue
                 try:
                     self._session()
                 except (PSVRError, HeadsetError) as e:
@@ -92,6 +113,18 @@ class DirectEngine(threading.Thread):
                 self._stop_event.wait(3)
         finally:
             self.shell.stop()
+
+    def _let_go(self):
+        """While SteamVR has the headset: start what was asked for, then just wait to be brought back."""
+        then, self._after_letting_go = self._after_letting_go, None
+        if then is not None:
+            try:
+                then()
+            except Exception:
+                log_error("start for SteamVR")
+        self.status = ("SteamVR has the headset (VR games). Close SteamVR or press 'Open in VR again'."
+                       if steamvr.running() else "SteamVR is closed - press 'Open in VR again' to come back.")
+        self._stop_event.wait(1.0)
 
     def _session(self):
         headset = SimulatedHeadset() if self.simulator else Headset(self.recenter)
@@ -123,7 +156,7 @@ class DirectEngine(threading.Thread):
         self._recenter_event.set()
         frames, t_fps, t_snapshot = 0, time.perf_counter(), time.perf_counter()
         was_active = False
-        while not self._stop_event.is_set() and not display.should_close:
+        while not self._stop_event.is_set() and not display.should_close and not self.handover:
             display.poll()
             s = self.store.get()
             now = time.monotonic()

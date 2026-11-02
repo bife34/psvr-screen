@@ -1,6 +1,7 @@
-"""Games: the PC's installed games (win/games.py) as a grid of covers. Click one: it starts, and its window comes
-into VR as a big screen in front of you (shell.start_game); while you play, the DS4 and the mouse belong to the
-game - Share + Options brings them back to VR.
+"""Games: the PC's installed games (win/games.py) as a grid of covers. Click one: play it on a big screen here
+(its window comes into VR in front of you, shell.start_game; while you play, the DS4 and the mouse belong to the
+game - Share + Options brings them back to VR), or in VR through SteamVR (the app lets go of the headset; the
+PC's control panel brings it back).
 """
 import threading
 
@@ -50,16 +51,18 @@ class GamesPage(Page):
     def build(self):
         w, h = PAGE_WIDTH - 64, theme.ROW
         rows = [Row([Label(Icon.GAMEPAD, size=theme.TITLE, color=theme.ACCENT_LIGHT, icon=True, h=int(h * 1.4), w=70),
-                     Label("Games", size=theme.HUGE - 12, h=int(h * 1.4)), Spacer(flex=1)], w=w, h=int(h * 1.4)),
-                Label("Click a game to play it on a big screen.  Share + Options: back to VR.", size=theme.SMALL - 6,
-                      color=theme.MUTED, w=w, h=h, indent=8)]
+                     Label("Games", size=theme.HUGE - 12, h=int(h * 1.4)), Spacer(flex=1),
+                     Button("steamvr", "Open SteamVR", Icon.SPHERE, h=h - 8, style="normal", size=theme.TEXT - 6,
+                            on_click=self.host.open_steamvr)], w=w, h=int(h * 1.4)),
+                Label("Click a game: a big screen here, or in VR (SteamVR).  Back from SteamVR: the PC's control "
+                      "panel.", size=theme.SMALL - 6, color=theme.MUTED, w=w, h=h, indent=8)]
         per_page = COLUMNS * ROWS
         grid_h = ROWS * CARD_H + (ROWS - 1) * theme.GAP * 2
         pages = max(1, (len(self.games) + per_page - 1) // per_page)
         self.page = min(self.page, pages - 1)
         shown = self.games[self.page * per_page:(self.page + 1) * per_page]
         cards = [Card(f"game:{self.page}:{i}", g.name, self.covers.get(g.id), CARD_W, CARD_H, icon=Icon.GAMEPAD,
-                      on_click=lambda g=g: self.host.start_game(g))
+                      on_click=lambda g=g: self.host.game_menu(g), on_right=lambda g=g: self.host.game_menu(g))
                  for i, g in enumerate(shown)]
         if self.loading:
             body = Label("Looking for games...", size=theme.SMALL, color=theme.MUTED, w=w, h=grid_h, align="center")

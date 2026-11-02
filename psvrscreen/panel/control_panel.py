@@ -1,5 +1,6 @@
 """Control panel on the main monitor: live 3D preview of the VR layout + sliders that apply instantly."""
 import math
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -267,6 +268,10 @@ class ControlPanel:
         self.mouse_button = self._header_button(header, "", self._toggle_mouse, ACCENT)
         self._header_button(header, "⟲  Recenter", engine.recenter)
         self._header_button(header, "＋  Add window", self._add_menu)
+        # While SteamVR has the headset: the way back (shown only then)
+        self.back_button = tk.Button(header, text="▶  Open in VR again", command=self._back_to_vr, bg="#2e7d32",
+                                     fg="white", activebackground="#388e3c", activeforeground="white", bd=0,
+                                     font=("Segoe UI Semibold", 11), padx=16, pady=6, cursor="hand2")
 
         # Fixed bottom bar: one tab per window in VR + add button
         self.bar = tk.Frame(self.root, bg=BAR_BG)
@@ -584,7 +589,20 @@ class ControlPanel:
         self.pad_mouse.set(s.gamepad_mouse)
         self.mode.set("head" if s.follow_head else "room")
 
+    def _back_to_vr(self):
+        self.back_button.config(text="Closing SteamVR...", state="disabled")
+        threading.Thread(target=self.engine.take_back, daemon=True, name="back-to-vr").start()
+
+    def _show_back_button(self):
+        handover = getattr(self.engine, "handover", False)
+        if handover and not self.back_button.winfo_ismapped():
+            self.back_button.config(text="▶  Open in VR again", state="normal")
+            self.back_button.pack(side="right", padx=12, pady=8)
+        elif not handover and self.back_button.winfo_ismapped():
+            self.back_button.pack_forget()
+
     def _tick(self):
+        self._show_back_button()
         if self.store.version != self._seen_version:
             self._seen_version = self.store.version
             self._sync_from_store()

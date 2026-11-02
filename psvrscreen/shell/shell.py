@@ -22,7 +22,7 @@ from ..core.settings import new_panel, shown_title
 from ..scene.surface import INTERFACE, OVERLAY, Surface
 from ..ui.theme import Icon
 from ..video import files
-from ..win import displays, start_apps, windows
+from ..win import displays, start_apps, steamvr, windows
 from ..win.media import MediaWatcher
 from . import workspace
 from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
@@ -97,6 +97,14 @@ class AppHost:
     def start_game(self, game):
         """Start a game (Games app): its window comes into VR as a big screen."""
         self._shell.start_game(game)
+
+    def game_menu(self, game):
+        """A game's choices: on a big screen here, or in VR through SteamVR."""
+        self._shell.game_menu(game)
+
+    def open_steamvr(self):
+        """Hand the headset to SteamVR (its home / dashboard)."""
+        self._shell.to_steamvr(steamvr.start)
 
     def open_file(self, path):
         """Open a file (or folder) in its Windows app; the app's window comes into VR."""
@@ -183,6 +191,7 @@ class Shell:
         self.dismissed_media = None              # title of the paused media whose player row was closed
         self.played_media = set()                # titles that played during this session (paused ones stay)
         self._game = None                        # (Game, when started) while its window is awaited
+        self.to_steamvr = lambda then=None: None  # set by the engine: let go of the headset for SteamVR
         self.game_windows = set()                # hwnds of games in VR (read by the controller threads)
         self._enter_game = False                 # a click on a game: the controls go to it after the click
         self._opened_file = None                 # a video file's VideoInfo, ready to play (from a thread)
@@ -771,6 +780,11 @@ class Shell:
         except OSError:
             log_error(f"start {game.name}")
             self._game = None
+
+    def game_menu(self, game):
+        self.open_menu(game.name, [
+            ("Play on a big screen (here)", Icon.MONITOR, lambda: self.start_game(game), "flat"),
+            ("Play in VR (SteamVR)", Icon.SPHERE, lambda: self.to_steamvr(game.start), "flat")])
 
     def game_in_front(self):
         """A game in VR has the keyboard and the controls aren't in VR: the DS4 and mouse play the game (any
