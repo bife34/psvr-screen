@@ -1,7 +1,7 @@
 """VR video around you: a sphere showing a 360° / 180° video, mono or 3D (one picture per eye).
 
-The sphere is real: its radius is the video's distance (surface.model scales a unit sphere), so each eye sees
-it from where that eye is - a sphere 1 m away looks 1 m away in every direction, like a window at 1 m.
+The sphere is real: its radius is the video's distance, so each eye sees it from where that eye is - a sphere
+1 m away looks 1 m away in every direction, like a window at 1 m.
 
 The picture comes as YUV planes (video/player.py) and is turned into colors here. Every pixel looks up its
 direction in the video's layout:
@@ -9,8 +9,9 @@ direction in the video's layout:
   equi180  the same for the half in front of you (VR180)
   mesh     YouTube's cube layout (equi-angular cubemap): 3 x 2 cube faces - top row left, front, right;
            bottom row down, back, up, turned on their side. Found by fitting a real YouTube frame.
-  screen   a flat screen in front of you (videos made for phone VR viewers): a real flat panel at the
-           distance, as wide as `screen_degrees` - farther away it is bigger, so it always looks the same size
+  screen   a screen in front of you (videos made for phone VR viewers): a real panel at the distance, as
+           wide as `screen_degrees` - farther away it is bigger, so it always looks the same size. Flat, or
+           bent like a window (curve 1 = around you: every point as far away)
 3D videos hold one picture per eye, stacked (top = left eye) or side by side (left = left eye).
 
 Viewer adjustments: size (the whole video bigger / smaller around you) and brightness.
@@ -20,22 +21,25 @@ import ctypes
 import numpy as np
 from OpenGL import GL
 
+from ..core import geometry
 from .gl import Mesh, Program
 
 
 VS = """
 #version 330 core
 layout(location = 0) in vec3 pos;
+layout(location = 1) in vec2 uv;
 uniform mat4 mvp;
 out vec3 v_dir;
-void main() { v_dir = pos; gl_Position = mvp * vec4(pos, 1.0); }
+out vec2 v_uv;
+void main() { v_dir = pos; v_uv = uv; gl_Position = mvp * vec4(pos, 1.0); }
 """
 FS = """
 #version 330 core
 in vec3 v_dir;
+in vec2 v_uv;             // screen: the place on the screen's picture
 uniform sampler2D tex_y, tex_u, tex_v;
 uniform int projection;   // 0 equi, 1 equi180, 2 mesh, 3 screen
-uniform vec2 screen_half; // screen: half its width and height at distance 1
 uniform int stereo;       // 0 mono, 1 top / bottom, 2 side by side
 uniform int eye;          // 0 left, 1 right
 uniform float opacity;
@@ -76,9 +80,7 @@ void main() {
         d = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
     }
     if (projection == 3) {
-        vec2 p = d.xy / max(d.z, 1e-4) / screen_half;
-        if (d.z <= 0.0 || abs(p.x) > 1.0 || abs(p.y) > 1.0) { color = vec4(0.0, 0.0, 0.0, opacity); return; }
-        uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+        uv = v_uv;
     } else if (projection == 2) {
         uv = cube(d);
     } else if (projection == 1) {
@@ -115,10 +117,18 @@ def _sphere(rings=48, segments=96):
     return np.array(verts, np.float32), np.array(idx, np.uint32)
 
 
-def _panel():
-    """Flat square from -1 to 1, 1 straight ahead (scaled to the screen's shape when drawn)."""
-    return (np.array([(-1, -1, -1, 0, 0), (1, -1, -1, 0, 0), (1, 1, -1, 0, 0), (-1, 1, -1, 0, 0)], np.float32),
-            np.array([0, 1, 2, 0, 2, 3], np.uint32))
+def _screen_shape(distance, degrees, curve):
+    """(width along the surface, curvature) of a screen `distance` away whose edges are `degrees` apart as
+    seen from your eyes - however much it is bent. curve 0 = flat; 1 = a circle around you (radius = distance);
+    in between the circle's center lies farther away, behind you never."""
+    half = np.radians(degrees / 2)
+    if curve < 0.001:
+        return 2 * distance * np.tan(half), 0.0
+    radius = distance / curve                  # circle through the screen's middle; its center is in front
+    # edge at angle phi on the circle seen at angle `half`: R sin(phi) = tan(half) (D - R + R cos(phi))
+    phi = half + np.arcsin(np.clip(np.sin(half) * (distance - radius) / radius, -1.0, 1.0))
+    width = 2 * radius * phi
+    return width, width / (2 * np.pi * radius)
 
 
 class VideoTexture:
@@ -172,9 +182,9 @@ class VideoTexture:
 
 
 class VideoSphere:
-    """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = placed and
-    scaled to the distance, data = {"projection", "stereo", "screen_degrees", "size", "brightness"}). Screen
-    videos are drawn on a flat panel instead of the sphere."""
+    """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = where the
+    video's front is, data = {"projection", "stereo", "distance", "screen_degrees", "screen_curve", "size",
+    "brightness"}). Screen videos are drawn on a panel instead of the sphere."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -182,7 +192,7 @@ class VideoSphere:
         for unit, name in enumerate(("tex_y", "tex_u", "tex_v")):
             prog.int(name, unit)
         self._mesh = Mesh(*_sphere())
-        self._panel = Mesh(*_panel())
+        self._panel, self._panel_shape = None, None
 
     def draw(self, view_proj, surface, eye):
         if surface.texture is None or not surface.texture.ready:
@@ -198,16 +208,25 @@ class VideoSphere:
         w, h = surface.texture.size
         stereo = surface.data.get("stereo")
         eye_aspect = (h / (w / 2)) if stereo == "side_by_side" else (h / 2 / w) if stereo == "top_bottom" else h / w
-        half_w = float(np.tan(np.radians(surface.data.get("screen_degrees", 60.0) / 2)))
-        if projection == "screen":    # the flat panel, shaped like the screen: it covers exactly the picture
-            mesh, model = self._panel, surface.model @ np.diag([half_w, half_w * eye_aspect, 1.0, 1.0])
-            prog.float("screen_half", 1.0, 1.0)
+        distance = data.get("distance", 10.0)
+        if projection == "screen":
+            width, curvature = _screen_shape(distance, data.get("screen_degrees", 60.0), data.get("screen_curve", 0.0))
+            flat_width = 2 * distance * np.tan(np.radians(data.get("screen_degrees", 60.0) / 2))
+            mesh = self._panel_mesh(width, flat_width * eye_aspect, curvature)
+            model = surface.model @ geometry.translate(0, 0, -distance)
         else:
-            mesh, model = self._mesh, surface.model
-            prog.float("screen_half", half_w, half_w * eye_aspect)
+            mesh, model = self._mesh, surface.model @ geometry.scale(distance)
         prog.mat4("mvp", view_proj @ model.astype(np.float32))
         prog.float("opacity", surface.opacity)
         surface.texture.bind()
         GL.glDepthMask(GL.GL_FALSE)       # behind everything: never hides a window or the controls
         mesh.draw()
         GL.glDepthMask(GL.GL_TRUE)
+
+    def _panel_mesh(self, width, height, curvature):
+        shape = (round(width, 3), round(height, 3), round(curvature, 4))
+        if shape != self._panel_shape:
+            if self._panel is not None:
+                self._panel.delete()
+            self._panel, self._panel_shape = Mesh(*geometry.surface_vertices(width, height, curvature)), shape
+        return self._panel

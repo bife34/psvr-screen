@@ -165,11 +165,10 @@ class ImmersiveVideo:
             self.texture.upload(frame)
         s = self.shell.settings()
         front = geometry.rotate_y(-self.front_yaw)
-        sphere = front @ geometry.scale(s.video_distance)   # centered between your eyes, as far in every direction
-        out = [Surface("video", sphere, 1, 1, texture=self.texture, shape="sphere",
-                       data={"projection": self.projection, "stereo": self.stereo,
-                             "screen_degrees": s.video_screen_degrees, "size": s.video_size,
-                             "brightness": s.video_brightness})]
+        out = [Surface("video", front, 1, 1, texture=self.texture, shape="sphere",   # centered between your eyes
+                       data={"projection": self.projection, "stereo": self.stereo, "distance": s.video_distance,
+                             "screen_degrees": s.video_screen_degrees, "screen_curve": s.video_screen_curve,
+                             "size": s.video_size, "brightness": s.video_brightness})]
         if self._controls_visible(now):
             self.controls.refresh()
             model = front @ geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
@@ -285,7 +284,7 @@ class VideoSettings(View):
                           on_change=lambda value: v.set_value(key, value / scale))
 
         def distance_slider():
-            """Logarithmic: as many steps from 0.3 to 1 m as from 10 to 33 m."""
+            """Logarithmic: as many steps from 0.3 to 1 m as from 30 to 100 m."""
             lo, hi = LIMITS["video_distance"]
             return Slider("video_distance", "Distance", math.log(s.video_distance), math.log(lo), math.log(hi),
                           w=w, text=lambda value: f"{math.exp(value):.2f} m" if value < math.log(10)
@@ -303,7 +302,8 @@ class VideoSettings(View):
                 choices("3D", [("mono", "Off"), ("side_by_side", "Side by side"), ("top_bottom", "Top / bottom")],
                         v.stereo, v.set_stereo)]
         if v.projection == "screen":
-            rows.append(slider("video_screen_degrees", "Screen size", "{:.0f}°"))
+            rows += [slider("video_screen_degrees", "Screen size", "{:.0f}°"),
+                     slider("video_screen_curve", "Curve", "{:.0f}%", 100)]
         else:
             rows.append(slider("video_size", "Size", "{:.2f}x"))
         rows += [distance_slider(),
