@@ -1,4 +1,7 @@
-"""VR video around you: a sphere far away showing a 360° / 180° video, mono or 3D (one picture per eye).
+"""VR video around you: a sphere showing a 360° / 180° video, mono or 3D (one picture per eye).
+
+The sphere is real: its radius is the video's distance (surface.model scales a unit sphere), so each eye sees
+it from where that eye is - a sphere 1 m away looks 1 m away in every direction, like a window at 1 m.
 
 The picture comes as YUV planes (video/player.py) and is turned into colors here. Every pixel looks up its
 direction in the video's layout:
@@ -9,9 +12,7 @@ direction in the video's layout:
   screen   a flat picture on a big screen in front of you (videos made for phone VR viewers)
 3D videos hold one picture per eye, stacked (top = left eye) or side by side (left = left eye).
 
-Viewer adjustments: size (the whole video bigger / smaller around you), 3D depth (each eye's picture turned a
-little apart: + = everything farther away, more relaxed, - = closer; a screen at distance D is a turn of
--(eye distance / D)), brightness.
+Viewer adjustments: size (the whole video bigger / smaller around you) and brightness.
 """
 import ctypes
 
@@ -20,7 +21,6 @@ from OpenGL import GL
 
 from .gl import Mesh, Program
 
-RADIUS = 20.0                       # far enough that the eyes' few cm apart don't matter
 
 VS = """
 #version 330 core
@@ -39,7 +39,6 @@ uniform int stereo;       // 0 mono, 1 top / bottom, 2 side by side
 uniform int eye;          // 0 left, 1 right
 uniform float opacity;
 uniform float size;       // 180° / 360°: 1 = as filmed, 2 = twice as big
-uniform float depth;      // radians the two eyes' pictures turn apart (+ = farther)
 uniform float brightness;
 out vec4 color;
 const float PI = 3.14159265;
@@ -68,8 +67,6 @@ const vec4 BLACK = vec4(0.0, 0.0, 0.0, 1.0);
 void main() {
     vec3 n = normalize(v_dir);
     vec3 d = vec3(n.x, n.y, -n.z);        // x right, y up, z = straight ahead
-    float turn = (eye == 0 ? 0.5 : -0.5) * depth;
-    d = vec3(d.x * cos(turn) + d.z * sin(turn), d.y, -d.x * sin(turn) + d.z * cos(turn));
     vec2 uv;
     float lon = atan(d.x, d.z), lat = asin(clamp(d.y, -1.0, 1.0));
     if (projection != 3) {                // size: angles shrink as the video grows
@@ -109,8 +106,7 @@ def _sphere(rings=48, segments=96):
         lat = np.pi / 2 - np.pi * i / rings
         for j in range(segments + 1):
             lon = 2 * np.pi * j / segments
-            verts.append((RADIUS * np.cos(lat) * np.sin(lon), RADIUS * np.sin(lat), RADIUS * np.cos(lat) * np.cos(lon),
-                          0.0, 0.0))
+            verts.append((np.cos(lat) * np.sin(lon), np.sin(lat), np.cos(lat) * np.cos(lon), 0.0, 0.0))
     for i in range(rings):
         for j in range(segments):
             a, b = i * (segments + 1) + j, (i + 1) * (segments + 1) + j
@@ -169,8 +165,8 @@ class VideoTexture:
 
 
 class VideoSphere:
-    """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, data = {"projection",
-    "stereo", "screen_degrees", "size", "depth" (degrees), "brightness"})."""
+    """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = placed and
+    scaled unit sphere, data = {"projection", "stereo", "screen_degrees", "size", "brightness"})."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -189,7 +185,6 @@ class VideoSphere:
         data = surface.data
         prog.int("eye", eye)
         prog.float("size", data.get("size", 1.0))
-        prog.float("depth", float(np.radians(data.get("depth", 0.0))))
         prog.float("brightness", data.get("brightness", 1.0))
         w, h = surface.texture.size
         stereo = surface.data.get("stereo")

@@ -6,7 +6,7 @@ or above the dock (a browser on the main screen).
 
 ImmersiveVideo is the video mode: the video plays on a sphere around you (render/video_sphere.py) instead
 of the room and the windows; its controls float below in front of the video while the pointer is in VR, and
-their ⚙ opens the video settings (view, 3D, size, distance / 3D depth, brightness, volume - all sliders).
+their ⚙ opens the video settings (view, 3D, size, distance, brightness, volume - all sliders).
 The browser's own playback is paused when it starts.
 """
 import dataclasses
@@ -165,13 +165,10 @@ class ImmersiveVideo:
             self.texture.upload(frame)
         s = self.shell.settings()
         front = geometry.rotate_y(-self.front_yaw)
-        if self.projection == "screen":   # the eyes turn in toward a screen that far away
-            depth = -math.degrees(s.ipd / s.video_screen_distance)
-        else:
-            depth = s.video_depth
-        out = [Surface("video", front, 1, 1, texture=self.texture, shape="sphere",
+        sphere = front @ geometry.scale(s.video_distance)   # centered between your eyes, as far in every direction
+        out = [Surface("video", sphere, 1, 1, texture=self.texture, shape="sphere",
                        data={"projection": self.projection, "stereo": self.stereo,
-                             "screen_degrees": s.video_screen_degrees, "size": s.video_size, "depth": depth,
+                             "screen_degrees": s.video_screen_degrees, "size": s.video_size,
                              "brightness": s.video_brightness})]
         if self._controls_visible(now):
             self.controls.refresh()
@@ -287,6 +284,14 @@ class VideoSettings(View):
             return Slider(key, label, getattr(s, key) * scale, lo * scale, hi * scale, fmt, w=w,
                           on_change=lambda value: v.set_value(key, value / scale))
 
+        def distance_slider():
+            """Logarithmic: as many steps from 0.3 to 1 m as from 10 to 33 m."""
+            lo, hi = LIMITS["video_distance"]
+            return Slider("video_distance", "Distance", math.log(s.video_distance), math.log(lo), math.log(hi),
+                          w=w, text=lambda value: f"{math.exp(value):.2f} m" if value < math.log(10)
+                          else f"{math.exp(value):.0f} m",
+                          on_change=lambda value: v.set_value("video_distance", math.exp(value)))
+
         sphere_only = ("screen",) if v.projection == "mesh" else ()
         views = [("screen", "Screen"), ("equi180", "180°"), ("equi", "360°")]
         current_view = "equi" if v.projection == "mesh" else v.projection
@@ -298,13 +303,12 @@ class VideoSettings(View):
                 choices("3D", [("mono", "Off"), ("side_by_side", "Side by side"), ("top_bottom", "Top / bottom")],
                         v.stereo, v.set_stereo)]
         if v.projection == "screen":
-            rows += [slider("video_screen_degrees", "Screen size", "{:.0f}°"),
-                     slider("video_screen_distance", "Distance", "{:.1f} m")]
+            rows.append(slider("video_screen_degrees", "Screen size", "{:.0f}°"))
         else:
-            rows += [slider("video_size", "Size", "{:.2f}x"),
-                     slider("video_depth", "3D depth", "{:+.1f}°"),
-                     Label("3D depth:  −  closer        +  farther, more relaxed", size=theme.SMALL - 6,
-                           color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24)]
+            rows.append(slider("video_size", "Size", "{:.2f}x"))
+        rows += [distance_slider(),
+                 Label("Distance:  drag, or the mouse wheel for small steps", size=theme.SMALL - 6,
+                       color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24)]
         rows += [slider("video_brightness", "Brightness", "{:.0f}%", 100),
                  slider("video_volume", "Volume", "{:.0f}%", 100)]
         return Column(rows, pad=14, bg=theme.BG, radius=28)

@@ -7,6 +7,7 @@ Callbacks (on_click, on_change) run on the render thread.
 from . import theme
 
 SLIDER_FULL_RANGE_DEGREES = 25.0   # pointer movement that takes a slider from one end to the other
+SLIDER_WHEEL_STEPS = 100           # mouse wheel notches from one end of a slider to the other
 
 
 class Widget:
@@ -186,14 +187,16 @@ class Button(Widget):
 
 class Slider(Widget):
     """label | track with knob | value, on one row. Grab anywhere on the row and move sideways: the change
-    is relative to where you grabbed it (it never jumps), SLIDER_FULL_RANGE_DEGREES for the whole range."""
+    is relative to where you grabbed it (it never jumps), SLIDER_FULL_RANGE_DEGREES for the whole range.
+    The mouse wheel moves it in small steps. `text(value)` may show the value differently than `fmt`."""
     interactive = True
 
     def __init__(self, key, label, value, lo, hi, fmt="{:.2f}", on_change=None, w=900, h=theme.ROW,
-                 disabled=False, disabled_text="locked"):
+                 disabled=False, disabled_text="locked", text=None):
         super().__init__(w, h, key)
         self.label, self.value, self.lo, self.hi, self.fmt = label, value, lo, hi, fmt
         self.on_change, self.disabled, self.disabled_text = on_change, disabled, disabled_text
+        self.text = text or fmt.format
         self.interactive = not disabled
 
     def draw(self, d, ctx):
@@ -201,7 +204,7 @@ class Slider(Widget):
         w, cy = x1 - x0, (y0 + y1) / 2
         d.text((x0 + 24, cy), self.label, font=theme.font(theme.TEXT), fill=theme.MUTED if self.disabled else theme.FG,
                anchor="lm")
-        value_text = self.disabled_text if self.disabled else self.fmt.format(self.value)
+        value_text = self.disabled_text if self.disabled else self.text(self.value)
         d.text((x1 - 24, cy), value_text, font=theme.font(theme.SMALL), fill=theme.MUTED, anchor="rm")
         t0, t1 = x0 + int(w * 0.32), x0 + int(w * 0.76)
         frac = max(0.0, min(1.0, (self.value - self.lo) / (self.hi - self.lo)))
@@ -221,6 +224,11 @@ class Slider(Widget):
             return
         frac = (e.yaw - e.start_yaw) / SLIDER_FULL_RANGE_DEGREES
         self.on_change(max(self.lo, min(self.hi, ctx.drag_start + frac * (self.hi - self.lo))))
+
+    def wheel(self, ctx, e):
+        if self.on_change and not self.disabled:
+            step = (self.hi - self.lo) / SLIDER_WHEEL_STEPS * (1 if e.delta > 0 else -1)
+            self.on_change(max(self.lo, min(self.hi, self.value + step)))
 
 
 class Toggle(Widget):

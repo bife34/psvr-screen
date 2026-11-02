@@ -67,9 +67,8 @@ class Settings:
     lens_k2: float = 0.24
     # VR videos
     video_screen_degrees: float = 60.0   # "screen" videos: how wide the screen looks
-    video_screen_distance: float = 3.0   # "screen" videos: how far away the screen is (m)
+    video_distance: float = 10.0         # radius of the video sphere around you (m): the video's distance
     video_size: float = 1.0              # 180° / 360° videos: bigger / smaller around you (1 = as filmed)
-    video_depth: float = 0.0             # 3D videos: degrees the eyes' pictures turn apart (+ = farther)
     video_brightness: float = 1.0
     video_volume: float = 1.0
 
@@ -94,8 +93,7 @@ LIMITS = {
     "lens_k2": (0.0, 0.6),
     "video_screen_degrees": (30.0, 100.0),
     "video_size": (0.5, 1.5),
-    "video_screen_distance": (0.7, 10.0),
-    "video_depth": (-12.0, 12.0),
+    "video_distance": (0.3, 50.0),
     "video_brightness": (0.5, 1.5),
     "video_volume": (0.0, 1.5),
 }
