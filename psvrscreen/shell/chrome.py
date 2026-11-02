@@ -1,5 +1,7 @@
 """What the shell adds to every window: the title bar (shown while you point at the window) and the
 settings card. Both are views; `shell` is the Shell they act on."""
+import math
+
 from ..core.settings import LIMITS, locked, shown_title
 from ..ui import theme
 from ..ui.theme import Icon
@@ -8,6 +10,8 @@ from ..ui.widgets import Button, Handle, Label, Panel, Row, Slider
 
 BAR_IMAGE_WIDTH = 2300   # the bar is drawn this wide and scaled to its window's width
 CARD_WIDTH = 940
+
+LOG_ROWS = ("width", "distance")   # sliders that move in proportion (0.5 -> 1 m is as far as 15 -> 30 m)
 
 # (window field, label, format) - one slider each on the settings card
 SETTINGS_ROWS = [
@@ -81,6 +85,11 @@ class SettingsCard(View):
         rows = [Label("Window settings", color=theme.ACCENT, w=CARD_WIDTH, h=int(theme.ROW * 1.15), indent=24)]
         for key, label, fmt in SETTINGS_ROWS:
             lo, hi = LIMITS[key]
+            if key in LOG_ROWS:   # fine steps up close / small, bigger ones far away / big
+                rows.append(Slider(key, label, math.log(p.get(key, lo)), math.log(lo), math.log(hi), w=CARD_WIDTH,
+                                   disabled=locked(p, key), text=lambda v, fmt=fmt: fmt.format(math.exp(v)),
+                                   on_change=lambda v, k=key: s.set_window_value(wid, k, math.exp(v))))
+                continue
             rows.append(Slider(key, label, p.get(key, 0), lo, hi, fmt, w=CARD_WIDTH, disabled=locked(p, key),
                                on_change=lambda v, k=key: s.set_window_value(wid, k, v)))
         return Panel(rows, pad=20, gap=4, w=CARD_WIDTH + 40)

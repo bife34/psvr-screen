@@ -465,7 +465,7 @@ class Shell:
 
     def set_window_value(self, wid, key, value):
         self.select(wid)
-        self.store.update(**{key: value})   # the selected window (keeps its look when its distance changes)
+        self.store.update(**{key: value})   # the selected window (distance moves it straight back)
 
     def show_window(self, wid):
         self.store.update_window(wid, shown=True)

@@ -12,7 +12,7 @@ ROOM_GAP_DEGREES = 2.0     # space left between windows that slid aside for a ne
 TUCKED_BEHIND = 0.3        # a window that stepped back may stay this much of its width behind the new one
 MAX_LAYER_DISTANCE = 4.0   # windows don't step back farther than this (m)
 CURVE_PER_DEGREE = 0.01    # bending with the wheel button: curve change per degree of up / down movement
-WHEEL_DISTANCE_STEP = 0.1  # mouse wheel while moving a window: closer / farther (m)
+WHEEL_DISTANCE_FACTOR = 1.08  # mouse wheel while moving a window: 8% farther / closer per notch
 
 
 def half_degrees(panel):
@@ -126,12 +126,12 @@ class WindowMove:
         self.store.update_window(self.window_id, yaw=new_yaw, height=new_height, distance=d)
 
     def wheel(self, e):
-        step = -WHEEL_DISTANCE_STEP if e.delta > 0 else WHEEL_DISTANCE_STEP
-        self.distance = clamp("distance", self.distance + step)
-        self.grab_distance = max(0.3, self.grab_distance + step)
+        factor = 1 / WHEEL_DISTANCE_FACTOR if e.delta > 0 else WHEEL_DISTANCE_FACTOR
+        self.distance = clamp("distance", self.distance * factor)
+        self.grab_distance = max(0.3, self.grab_distance * factor)
         self.store.update_window(self.window_id, distance=self.distance)
         me = next((p for p in self.store.get().panels if p["id"] == self.window_id), None)
-        if me:   # the window grew with the distance (it keeps its look): keep dragging from here
+        if me:   # it moved straight back (its height too): keep dragging from here
             self.start = (e.yaw, e.pitch, me["yaw"], me["height"], me["distance"])
             self.distance = me["distance"]
 
@@ -159,9 +159,9 @@ class WindowBend:
 
 
 def nudge_distance(store, window_id, delta):
-    """Alt + wheel on a window: closer / farther (it keeps its look, see core.settings._keep_view_size)."""
+    """Alt + wheel on a window: closer / farther (straight back, see core.settings._straight_back)."""
     me = next((p for p in store.get().panels if p["id"] == window_id), None)
     if me is not None:
         lo, hi = LIMITS["distance"]
-        step = -WHEEL_DISTANCE_STEP if delta > 0 else WHEEL_DISTANCE_STEP
-        store.update_window(window_id, distance=max(lo, min(hi, me["distance"] + step)))
+        factor = 1 / WHEEL_DISTANCE_FACTOR if delta > 0 else WHEEL_DISTANCE_FACTOR
+        store.update_window(window_id, distance=max(lo, min(hi, me["distance"] * factor)))

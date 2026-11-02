@@ -124,9 +124,9 @@ class Settings:
 # Slider limits, also used by the gamepad so both stay in range.
 LIMITS = {
     "yaw": (-170.0, 170.0),
-    "width": (0.3, 15.0),
-    "distance": (0.5, 8.0),
-    "height": (-4.0, 4.0),
+    "width": (0.3, 40.0),
+    "distance": (0.5, 30.0),
+    "height": (-15.0, 15.0),
     "curvature": (0.0, 0.6),
     "tilt": (-75.0, 75.0),
     "turn": (-80.0, 80.0),
@@ -169,18 +169,15 @@ def clamp(name, value):
     return max(lo, min(hi, value))
 
 
-def _keep_view_size(panel, changes):
-    """Distance only changes how deep a window sits, not how big it looks: when it moves farther away it
-    grows by the same factor (and its height moves along), so it covers the same part of your view and its
-    text stays just as readable. "Size" alone decides how big it looks."""
-    if "distance" not in changes or "width" in changes or panel.get("distance", 0) <= 0:
+def _straight_back(panel, changes):
+    """Distance moves a window like a real screen: straight away from you (or closer) along your line of sight,
+    so it stays at the same spot in your view and looks smaller farther away. Its size never changes with it -
+    Size and Distance are separate."""
+    if "distance" not in changes or "height" in changes or panel.get("distance", 0) <= 0:
         return changes
     new_distance = clamp("distance", changes["distance"])
     k = new_distance / panel["distance"]
-    changes = dict(changes, distance=new_distance, width=clamp("width", panel["width"] * k))
-    if "height" not in changes:
-        changes["height"] = clamp("height", panel["height"] * k)
-    return changes
+    return dict(changes, distance=new_distance, height=clamp("height", panel["height"] * k))
 
 
 def locked(panel, key):
@@ -244,7 +241,7 @@ class SettingsStore:
     def update(self, **changes):
         with self._lock:
             if self._settings.panels and not locked(self._settings.panels[self._settings.selected], "distance"):
-                changes = _keep_view_size(self._settings.panels[self._settings.selected], changes)
+                changes = _straight_back(self._settings.panels[self._settings.selected], changes)
             for key, value in changes.items():
                 if key in LIMITS:
                     value = clamp(key, value)
@@ -293,7 +290,7 @@ class SettingsStore:
             if 0 <= index < len(self._settings.panels):
                 panel = self._settings.panels[index]
                 if not locked(panel, "distance"):
-                    fields_ = _keep_view_size(panel, fields_)
+                    fields_ = _straight_back(panel, fields_)
                 panel.update({k: (clamp(k, v) if k in LIMITS else v) for k, v in fields_.items()
                               if not locked(panel, k)})
                 self._remember_profile(panel)
