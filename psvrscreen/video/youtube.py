@@ -5,8 +5,10 @@ Uses yt-dlp. YouTube marks spherical formats in the format note: "2160s" (s = sp
 videos are uploaded as normal flat videos holding two pictures side by side (made for phone VR viewers):
 those are recognised by their title and shown on a big screen ("screen").
 
-Stereo 3D isn't marked anywhere: one frame is looked at - if its left and right halves (or top and bottom)
-are nearly the same picture, it is 3D. Everything can be changed in the player.
+Stereo 3D isn't marked anywhere: two frames are looked at - if their left and right halves (or top and
+bottom) show the same details, it is 3D. Only the middle of each half is compared (the edges often hold
+mirrored lens masks), allowing a small sideways shift (each eye sees things a little shifted), and only fine
+detail counts (the eyes' pictures can differ in brightness). Everything can be changed in the player.
 """
 import re
 from dataclasses import dataclass
@@ -17,7 +19,9 @@ WATCH_URL = re.compile(r"(?:youtube\.com/(?:watch\?(?:\S*&)?v=|shorts/|live/)|yo
 MAX_PIXELS = 3840 * 2160 * 1.1      # picture size the player decodes smoothly (4K, or 2880x2880 3D)
 CODEC_PREFERENCE = ("vp9", "vp09", "avc1", "av01")   # VP9 decodes fastest here; AV1 is the slowest
 VR_TITLE = re.compile(r"\b(vr|3d|sbs|180|360|stereoscopic)\b", re.IGNORECASE)
-SAME_PICTURE = 0.8               # halves correlating this much hold the same picture (3D)
+SAME_PICTURE = 0.3               # halves whose details correlate this much hold the same picture (3D);
+                                 # measured: 3D 0.45-0.92, normal videos below 0.05
+LOOK_AT = (0.2, 0.5)             # the frames looked at, as part of the video's length
 
 
 @dataclass
@@ -55,7 +59,7 @@ def _decodable(fmt):
         return False
     if codec.startswith("vp9.2") or codec.startswith("vp09.02"):
         return False
-    if codec.startswith("av01") and not codec.endswith(".08"):
+    if codec.startswith("av01") and codec.split(".")[3:4] != ["08"]:   # av01.<profile>.<level>.<bit depth>...
         return False
     return codec.startswith(CODEC_PREFERENCE)
 
@@ -78,29 +82,55 @@ def _similar(a, b):
     return float((a * b).sum() / norm) if norm else 0.0
 
 
-def stereo_of(y):
-    """"side_by_side", "top_bottom" or "mono" from a frame's brightness plane (2D array)."""
+def _blocks(a, n):
+    """Average of n x n pixel blocks (a smaller picture)."""
+    h, w = a.shape[0] // n * n, a.shape[1] // n * n
+    return a[:h, :w].reshape(h // n, n, w // n, n).mean(axis=(1, 3))
+
+
+def _detail(a, k=5):
+    """Fine detail only: the picture minus a blurred copy of itself."""
+    s = 2 * k + 1
+    c = np.pad(np.cumsum(np.cumsum(np.pad(a, k, mode="edge"), 0), 1), ((1, 0), (1, 0)))
+    blur = (c[s:, s:] - c[:-s, s:] - c[s:, :-s] + c[:-s, :-s]) / (s * s)
+    return a - blur[:a.shape[0], :a.shape[1]]
+
+
+def _same_picture(a, b):
+    """How much two halves show the same details (-1..1), see the module doc."""
+    n = max(1, min(a.shape) // 96)
+    a, b = _detail(_blocks(a, n)), _detail(_blocks(b, n))
+    w = a.shape[1]
+    m0, m1 = w // 5, w - w // 5
+    return max(_similar(a[:, m0:m1], b[:, m0 + s:m1 + s])
+               for s in range(-(w // 16), w // 16 + 1) if m0 + s >= 0 and m1 + s <= w)
+
+
+def stereo_scores(y):
+    """(side by side, top / bottom) similarity of a frame's brightness plane (2D array)."""
+    y = y.astype(np.float32)
     h, w = y.shape
-    small = y[::max(1, h // 128), ::max(1, w // 256)].astype(np.float32)
-    h, w = small.shape
-    if _similar(small[:, :w // 2], small[:, w // 2:w // 2 * 2]) > SAME_PICTURE:
-        return "side_by_side"
-    if _similar(small[:h // 2], small[h // 2:h // 2 * 2]) > SAME_PICTURE:
-        return "top_bottom"
-    return "mono"
+    return (_same_picture(y[:, :w // 2], y[:, w // 2:w // 2 * 2]),
+            _same_picture(y[:h // 2], y[h // 2:h // 2 * 2]))
 
 
-def _look_at_frame(url, duration):
-    """Stereo layout from a frame a bit into the video (the start is often a black title)."""
+def _look_at_frames(url, duration):
+    """Stereo layout from frames a bit into the video (the start is often a black title)."""
     import av
+    scores = []
     container = av.open(url, timeout=20)
     try:
-        if duration > 20:
-            container.seek(int(min(duration * 0.2, 120) * 1_000_000))
-        frame = next(container.decode(container.streams.video[0]))
-        return stereo_of(frame.to_ndarray(format="gray"))
+        for part in LOOK_AT if duration > 20 else (0,):
+            if part:
+                container.seek(int(duration * part * 1_000_000))
+            frame = next(container.decode(container.streams.video[0]))
+            scores.append(stereo_scores(frame.to_ndarray(format="gray")))
     finally:
         container.close()
+    side, stacked = np.mean(scores, axis=0)
+    if max(side, stacked) < SAME_PICTURE:
+        return "mono"
+    return "side_by_side" if side >= stacked else "top_bottom"
 
 
 def probe(vid):
@@ -128,7 +158,7 @@ def probe(vid):
     w, h = video.get("width") or 0, video.get("height") or 0
     duration = float(info.get("duration") or 0)
     try:
-        stereo = _look_at_frame(video["url"], duration)
+        stereo = _look_at_frames(video["url"], duration)
     except Exception:
         stereo = guess_stereo(projection, w, h)
     if projection == "screen" and stereo == "mono":
