@@ -21,6 +21,7 @@ class VideoInfo:
     headers: dict = field(default_factory=dict)   # what the site's server wants to see (Referer, User-Agent)
     duration: float = 0.0    # seconds (0 = unknown, e.g. live)
     fov: float = recognize.DEFAULT_FISHEYE_FOV   # fisheye: degrees the lens sees
+    start: float = 0.0       # seconds: where playing starts (Continue watching)
 
 
 def open_options(headers):

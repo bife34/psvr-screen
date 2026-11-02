@@ -443,9 +443,11 @@ class Card(Widget):
     right click: its menu."""
     interactive = True
 
-    def __init__(self, key, title, image, w, h, badges=(), on_click=None, on_right=None, icon=None, subtitle=None):
+    def __init__(self, key, title, image, w, h, badges=(), on_click=None, on_right=None, icon=None, subtitle=None,
+                 progress=None):
         super().__init__(w, h, key)
         self.title, self.image, self.badges, self.icon, self.subtitle = title, image, badges, icon, subtitle
+        self.progress = progress     # 0..1: a bar along the picture's bottom (how much was watched)
         self.on_click, self.on_right = on_click, on_right
 
     def draw(self, d, ctx):
@@ -457,6 +459,12 @@ class Card(Widget):
         picture = Picture(self.image, x1 - x0, y1 - y0 - text_h, icon=self.icon)
         picture.layout(x0, y0, x1 - x0, y1 - y0 - text_h)
         picture.draw(d, ctx)
+        if self.progress is not None:
+            by = y1 - text_h - 22
+            d.rounded_rectangle((x0 + 16, by, x1 - 16, by + 8), 4, fill=(255, 255, 255, 70))
+            fill_x = x0 + 16 + int((x1 - x0 - 32) * max(0.0, min(1.0, self.progress)))
+            if fill_x > x0 + 20:
+                d.rounded_rectangle((x0 + 16, by, fill_x, by + 8), 4, fill=theme.ACCENT)
         bx = x0 + 12
         for text, color in self.badges:
             badge = Badge(text, color)

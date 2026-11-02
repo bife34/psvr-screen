@@ -65,6 +65,8 @@ class Settings:
     auto_add_windows: bool = True   # while you wear the headset, newly opened app windows go into VR
     sharp_text: bool = True     # big round text: VR monitor at 2560x1440 225%, windows sized for the headset
     shortcuts: dict = field(default_factory=lambda: dict(DEFAULT_SHORTCUTS))   # action -> "Ctrl+Alt+P"
+    watching: list = field(default_factory=list)   # videos stopped partway, newest first: {path, position,
+                                                   # duration, projection, stereo} (never in private mode)
     app_profiles: dict = field(default_factory=dict)   # app exe -> its last look (size, text, curve, locks...)
     follow_head: bool = False   # True = stuck to your view, False = fixed in the room
     own_room: bool = True       # act as the main VR app when no game runs (closes the SteamVR menu)

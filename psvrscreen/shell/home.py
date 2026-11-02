@@ -7,11 +7,13 @@ import time
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Grid, Label, Panel, Row, Spacer, Tile
+from ..ui.widgets import Card, Grid, Label, Panel, Row, Spacer, Tile
+from ..video.thumbs import THUMBNAILS
 from .dialogs import DIALOG_DISTANCE
 
 TILE = 300
 COLUMNS = 3
+CONTINUE_SHOWN = 3
 # key, name, icon, color, subtitle
 TILES = [
     ("videos", "Videos", Icon.VIDEO, (10, 132, 255, 255), "180° · 360° · 3D"),
@@ -29,7 +31,8 @@ class Home(View):
         self.shell = shell
 
     def state(self):
-        return time.strftime("%H:%M"), self.shell.settings().private_mode
+        watching = tuple(w["path"] + str(w["position"]) for _, w in self.shell.continue_watching())
+        return time.strftime("%H:%M"), self.shell.settings().private_mode, watching, THUMBNAILS.version
 
     def build(self):
         shell = self.shell
@@ -42,7 +45,24 @@ class Home(View):
         tiles = [Tile("tile:" + key, name, icon, color, on_click=lambda key=key: shell.home_action(key),
                       w=TILE, h=TILE, subtitle=subtitle)
                  for key, name, icon, color, subtitle in TILES]
-        rows = [header, Grid(tiles, COLUMNS)]
+        rows = [header]
+        watching = shell.continue_watching()[:CONTINUE_SHOWN]
+        if watching:
+            card_h = int(TILE * 9 / 16) + int(theme.SMALL * 2.6)
+            cards = []
+            for i, (path, entry) in enumerate(watching):
+                image, _ = THUMBNAILS.get(path)
+                left = max(0, int(entry["duration"] - entry["position"]))
+                cards.append(Card(f"continue:{i}", path.stem, image, TILE, card_h, icon=Icon.VIDEO,
+                                  subtitle=f"{left // 60} min left" if left >= 60 else f"{left} s left",
+                                  progress=entry["position"] / entry["duration"],
+                                  on_click=lambda e=entry: shell.resume(e),
+                                  on_right=lambda e=entry: shell.watching_menu(e)))
+            rows += [Label("Continue watching", size=theme.TEXT - 4, color=theme.MUTED, w=width, h=theme.ROW,
+                           indent=8),
+                     Grid(cards, COLUMNS),
+                     Label("Apps", size=theme.TEXT - 4, color=theme.MUTED, w=width, h=theme.ROW, indent=8)]
+        rows.append(Grid(tiles, COLUMNS))
         if shell.settings().private_mode:
             rows.append(Label("Private mode is on - titles are hidden", size=theme.SMALL - 6, color=theme.MUTED,
                               w=width, h=theme.SMALL, align="center"))

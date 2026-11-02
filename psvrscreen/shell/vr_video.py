@@ -244,7 +244,8 @@ class ImmersiveVideo:
         elif self.window:
             self.player = WindowPlayer(hwnd, shell.media)
         else:
-            self.player = VideoPlayer(info.video_url, info.audio_url, info.duration, headers=info.headers)
+            self.player = VideoPlayer(info.video_url, info.audio_url, info.duration, start=info.start,
+                                      headers=info.headers)
             self.player.volume = shell.settings().video_volume
         self.texture = VideoTexture()
         self.controls = Controls(self)
@@ -282,6 +283,8 @@ class ImmersiveVideo:
 
     def close(self):
         self._closed = True
+        if not self.photo and not self.window:
+            self.shell.remember_position(self.info, self.projection, self.stereo, self.player.position)
         self.player.close()
         self.texture.delete()
         self.controls.release()

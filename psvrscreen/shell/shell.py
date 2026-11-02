@@ -10,6 +10,7 @@ import math
 import os
 import threading
 import time
+from pathlib import Path
 
 from .. import apps
 from ..apps.desktop import new_panel_for
@@ -32,6 +33,9 @@ from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_vid
 BAR_LINGER_SECONDS = 1.5          # a window's title bar stays this long after the pointer leaves the window
 CARD_DISTANCE, CARD_SIDE_DEGREES = 1.2, 18   # settings card: near you, a little to the right of its window
 OPENED_FROM_VR_SECONDS = 6        # a new app window this soon after a click in VR was opened from VR
+CONTINUE_FROM_SECONDS = 20       # a video stopped after this and before the end is in Continue watching
+CONTINUE_UNTIL = 0.95             # (part of its length: later counts as watched)
+CONTINUE_KEEP = 9
 LAUNCHED_FROM_VR_SECONDS = 20     # apps can take a while to show their window after launching
 LENS_SIZE, LENS_ZOOM = 0.38, 2.0  # zoom lens: width as part of the window, magnification
 POINTER_BLUE = (0.31, 0.61, 0.98, 1.0)
@@ -494,8 +498,9 @@ class Shell:
 
         threading.Thread(target=read, daemon=True, name="open-photo").start()
 
-    def watch_file(self, path, projection=None, stereo=None):
-        """Play a video file around you; projection / stereo: as you chose it (else recognised)."""
+    def watch_file(self, path, projection=None, stereo=None, start=0.0):
+        """Play a video file around you; projection / stereo: as you chose it (else recognised); from `start`
+        seconds on."""
         self._close_dialog()
 
         def read():
@@ -505,9 +510,44 @@ class Shell:
                 return
             info.projection = projection or info.projection
             info.stereo = stereo or info.stereo
+            info.start = start
             self._opened_file = info
 
         threading.Thread(target=read, daemon=True, name="open-video").start()
+
+    # -- Continue watching ------------------------------------------------------------------------------
+    def remember_position(self, info, projection, stereo, position):
+        """A video file stopped: keep where (Home's Continue watching), or forget it if it was watched to the
+        end or hardly started. Nothing is kept in private mode."""
+        if self._settings.private_mode or not os.path.isfile(info.video_url or ""):
+            return
+        path, duration = info.video_url, info.duration
+        watching = [w for w in self._settings.watching if os.path.normcase(w["path"]) != os.path.normcase(path)]
+        if duration and CONTINUE_FROM_SECONDS < position < duration * CONTINUE_UNTIL:
+            watching.insert(0, {"path": path, "position": round(position, 1), "duration": duration,
+                                "projection": projection, "stereo": stereo})
+        self.store.update(watching=watching[:CONTINUE_KEEP])
+
+    def continue_watching(self):
+        """[(Path, entry)] still on the PC, newest first (none in private mode)."""
+        if self._settings.private_mode:
+            return []
+        return [(Path(w["path"]), w) for w in self._settings.watching if os.path.isfile(w["path"])]
+
+    def resume(self, entry):
+        self.watch_file(Path(entry["path"]), entry.get("projection"), entry.get("stereo"),
+                        max(0.0, entry["position"] - 3))   # a few seconds back: you know where you are
+
+    def forget_watching(self, entry):
+        self.store.update(watching=[w for w in self._settings.watching if w["path"] != entry["path"]])
+
+    def watching_menu(self, entry):
+        path = Path(entry["path"])
+        self.open_menu(path.name, [
+            ("Continue", Icon.PLAY, lambda: self.resume(entry), "flat"),
+            ("Play from the start", Icon.PLAY,
+             lambda: self.watch_file(path, entry.get("projection"), entry.get("stereo")), "flat"),
+            ("Remove from Continue watching", Icon.CLOSE, lambda: self.forget_watching(entry), "flat")])
 
     def _pick(self, choice):
         if choice[0] == "window":
