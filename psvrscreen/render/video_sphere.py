@@ -9,7 +9,8 @@ direction in the video's layout:
   equi180  the same for the half in front of you (VR180)
   mesh     YouTube's cube layout (equi-angular cubemap): 3 x 2 cube faces - top row left, front, right;
            bottom row down, back, up, turned on their side. Found by fitting a real YouTube frame.
-  screen   a flat picture on a big screen in front of you (videos made for phone VR viewers)
+  screen   a flat screen in front of you (videos made for phone VR viewers): a real flat panel at the
+           distance, as wide as `screen_degrees` - farther away it is bigger, so it always looks the same size
 3D videos hold one picture per eye, stacked (top = left eye) or side by side (left = left eye).
 
 Viewer adjustments: size (the whole video bigger / smaller around you) and brightness.
@@ -114,6 +115,12 @@ def _sphere(rings=48, segments=96):
     return np.array(verts, np.float32), np.array(idx, np.uint32)
 
 
+def _panel():
+    """Flat square from -1 to 1, 1 straight ahead (scaled to the screen's shape when drawn)."""
+    return (np.array([(-1, -1, -1, 0, 0), (1, -1, -1, 0, 0), (1, 1, -1, 0, 0), (-1, 1, -1, 0, 0)], np.float32),
+            np.array([0, 1, 2, 0, 2, 3], np.uint32))
+
+
 class VideoTexture:
     """The current video frame on the GPU: Y, U and V planes (one channel each). Frames go through pixel
     buffers: the copy to the GPU then runs in the background (a 4K frame takes ~2 ms of the frame instead of
@@ -166,7 +173,8 @@ class VideoTexture:
 
 class VideoSphere:
     """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = placed and
-    scaled unit sphere, data = {"projection", "stereo", "screen_degrees", "size", "brightness"})."""
+    scaled to the distance, data = {"projection", "stereo", "screen_degrees", "size", "brightness"}). Screen
+    videos are drawn on a flat panel instead of the sphere."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -174,13 +182,14 @@ class VideoSphere:
         for unit, name in enumerate(("tex_y", "tex_u", "tex_v")):
             prog.int(name, unit)
         self._mesh = Mesh(*_sphere())
+        self._panel = Mesh(*_panel())
 
     def draw(self, view_proj, surface, eye):
         if surface.texture is None or not surface.texture.ready:
             return
         prog = self._prog.use()
-        prog.mat4("mvp", view_proj @ surface.model)
-        prog.int("projection", PROJECTIONS.get(surface.data.get("projection"), 0))
+        projection = surface.data.get("projection")
+        prog.int("projection", PROJECTIONS.get(projection, 0))
         prog.int("stereo", STEREO.get(surface.data.get("stereo"), 0))
         data = surface.data
         prog.int("eye", eye)
@@ -190,9 +199,15 @@ class VideoSphere:
         stereo = surface.data.get("stereo")
         eye_aspect = (h / (w / 2)) if stereo == "side_by_side" else (h / 2 / w) if stereo == "top_bottom" else h / w
         half_w = float(np.tan(np.radians(surface.data.get("screen_degrees", 60.0) / 2)))
-        prog.float("screen_half", half_w, half_w * eye_aspect)
+        if projection == "screen":    # the flat panel, shaped like the screen: it covers exactly the picture
+            mesh, model = self._panel, surface.model @ np.diag([half_w, half_w * eye_aspect, 1.0, 1.0])
+            prog.float("screen_half", 1.0, 1.0)
+        else:
+            mesh, model = self._mesh, surface.model
+            prog.float("screen_half", half_w, half_w * eye_aspect)
+        prog.mat4("mvp", view_proj @ model.astype(np.float32))
         prog.float("opacity", surface.opacity)
         surface.texture.bind()
         GL.glDepthMask(GL.GL_FALSE)       # behind everything: never hides a window or the controls
-        self._mesh.draw()
+        mesh.draw()
         GL.glDepthMask(GL.GL_TRUE)
