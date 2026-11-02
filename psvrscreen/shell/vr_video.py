@@ -321,6 +321,7 @@ class ImmersiveVideo:
                              "size": s.video_size, "brightness": s.video_brightness,
                              "contrast": s.video_contrast, "saturation": s.video_saturation,
                              "ipd": s.video_ipd if self.stereo != "mono" else 0.0,
+                             "eye_height": s.video_eye_height if self.stereo != "mono" else 0.0,
                              "move_away": s.video_move_away,
                              "place": (s.video_place_right, s.video_place_up, s.video_place_forward),
                              "fov": self.fov, "crop": getattr(self.player, "crop", (0.0, 0.0, 1.0, 1.0))})]
@@ -507,7 +508,9 @@ class VideoSettings(View):
                 rows += [slider("video_size", "Size (zoom)", "{:.2f}x")]
             if v.stereo != "mono":
                 rows += [slider("video_ipd", "IPD (depth)", "{:+.1f}°"),
-                         hint("IPD = how far the 3D feels:  ←  closer, bigger      farther, smaller  →")]
+                         hint("IPD = how far the 3D feels:  ←  closer, bigger      farther, smaller  →"),
+                         slider("video_eye_height", "Eye height", "{:+.2f}°"),
+                         hint("Eye height: if this video's 3D looks double up / down, line its eyes up here")]
             else:
                 rows.append(hint("Eye separation is for 3D videos (3D above)"))
             return Column(rows, pad=14, bg=theme.BG, radius=28)

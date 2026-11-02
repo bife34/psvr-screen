@@ -46,8 +46,11 @@ LENS_SLIDERS = [
     ("ipd", "Eye distance (IPD)", "{:.3f} m"),
     ("lens_k1", "Lens distortion K1", "{:.2f}"),
     ("lens_k2", "Lens distortion K2", "{:.2f}"),
+    ("lens_apart", "Eye pictures apart (line up with your eyes)", "{:+.3f}"),
+    ("lens_height", "Left eye picture higher / lower", "{:+.3f}"),
 ]
-LENS_DEFAULTS = {"lens_fov": 95.0, "ipd": 0.063, "lens_k1": 0.22, "lens_k2": 0.24}
+LENS_DEFAULTS = {"lens_fov": 95.0, "ipd": 0.063, "lens_k1": 0.22, "lens_k2": 0.24, "lens_apart": 0.0,
+                 "lens_height": 0.0}
 
 CONTROLS_HELP = (
     "Left stick: move the mouse\n"

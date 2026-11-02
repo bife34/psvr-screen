@@ -81,6 +81,10 @@ class Settings:
     ipd: float = 0.063          # distance between your eyes, meters
     lens_k1: float = 0.22
     lens_k2: float = 0.24
+    # Lining the eyes' pictures up with your eyes (everyone's are a bit different)
+    lens_apart: float = 0.0     # + = the two pictures farther apart on the headset's screen
+    lens_height: float = 0.0    # + = the left eye's picture higher than the right one's
+    eye_test: bool = False      # show the alignment crosses (red: left eye, green: right eye)
     # VR videos
     private_mode: bool = False           # hide what you watch: titles become app names / "Video", no history
     video_screen_degrees: float = 60.0   # "screen" videos: how wide the screen looks
@@ -90,6 +94,7 @@ class Settings:
     video_tilt: float = 0.0              # the video turned up (+) / down (-), degrees (lying down: up)
     video_roll: float = 0.0              # the video turned around straight ahead (a crooked horizon), degrees
     video_ipd: float = 0.0               # 3D: degrees the eyes' pictures are turned apart (+ = farther, smaller)
+    video_eye_height: float = 0.0        # 3D: degrees the left eye's picture is raised over the right one's
     video_contrast: float = 1.0
     video_saturation: float = 1.0
     # Where you are inside the video's dome, as parts of its radius (0 = the middle)
@@ -119,6 +124,9 @@ LIMITS = {
     "ipd": (0.055, 0.075),
     "lens_k1": (0.0, 0.6),
     "lens_k2": (0.0, 0.6),
+    "lens_apart": (-0.08, 0.08),
+    "lens_height": (-0.05, 0.05),
+    "video_eye_height": (-3.0, 3.0),
     "video_screen_degrees": (30.0, 100.0),
     "video_size": (0.5, 1.5),
     "video_distance": (0.3, 300.0),

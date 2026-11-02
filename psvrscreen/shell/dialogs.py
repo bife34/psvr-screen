@@ -23,6 +23,10 @@ GLOBAL_SETTINGS_ROWS = [
     ("title", None, "Picture", None),
     ("slider", "lens_fov", "Field of view", "{:.0f}°"),
     ("slider", "ipd", "Eye distance", "{:.3f} m"),
+    ("title", None, "Line up your eyes (turn the test on: make the red and green cross one)", None),
+    ("toggle", "eye_test", "Eye alignment test", None),
+    ("slider", "lens_apart", "Eyes apart", "{:+.3f}"),
+    ("slider", "lens_height", "Eye height", "{:+.3f}"),
     ("title", None, "Layout", None),
     ("toggle", "follow_head", "Windows follow my head", None),
 ]

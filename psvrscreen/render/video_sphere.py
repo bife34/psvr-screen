@@ -61,6 +61,7 @@ uniform float brightness;
 uniform float contrast;
 uniform float saturation;
 uniform float separation; // radians the eyes' pictures are turned apart (+ = farther)
+uniform float eye_height; // radians the left eye's picture is raised over the right one's
 out vec4 color;
 const float PI = 3.14159265;
 
@@ -96,6 +97,8 @@ void main() {
     vec3 d = vec3(n.x, n.y, -n.z);        // x right, y up, z = straight ahead
     float turn = (eye == 0 ? 0.5 : -0.5) * separation;
     d = vec3(d.x * cos(turn) + d.z * sin(turn), d.y, -d.x * sin(turn) + d.z * cos(turn));
+    float lift = (eye == 0 ? -0.5 : 0.5) * eye_height;
+    d = vec3(d.x, d.y * cos(lift) - d.z * sin(lift), d.y * sin(lift) + d.z * cos(lift));
     vec2 uv;
     float lon = atan(d.x, d.z), lat = asin(clamp(d.y, -1.0, 1.0));
     if (projection != 3) {                // size: angles shrink as the video grows
@@ -265,6 +268,7 @@ class VideoSphere:
         prog.float("contrast", data.get("contrast", 1.0))
         prog.float("saturation", data.get("saturation", 1.0))
         prog.float("separation", float(np.radians(data.get("ipd", 0.0))))
+        prog.float("eye_height", float(np.radians(data.get("eye_height", 0.0))))
         x0, y0, x1, y1 = data.get("crop", (0.0, 0.0, 1.0, 1.0))
         w, h = surface.texture.size[0] * (x1 - x0), surface.texture.size[1] * (y1 - y0)
         stereo = surface.data.get("stereo")

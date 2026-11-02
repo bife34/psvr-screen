@@ -178,7 +178,7 @@ class DirectEngine(threading.Thread):
                 view = np.linalg.inv(geometry.rigid(head_rot, eye_pos))
                 display.begin_eye(eye)
                 renderer.draw_eye(proj @ view, surfaces, eye)
-            display.present(s.lens_k1, s.lens_k2)
+            display.present(s.lens_k1, s.lens_k2, s.lens_apart, s.lens_height, s.eye_test)
             renderer.end_frame()
 
             frames += 1
