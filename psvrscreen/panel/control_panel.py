@@ -221,7 +221,7 @@ class Viewer3D:
     def _panel_geometry(self, p, index, aspect, selected, project, quads, edges, labels):
         sw, sh = p["width"], p["width"] * aspect
         cols = 24
-        radius = geometry.curve_radius(sw, geometry.window_curvature(sw, p["distance"], p["curvature"]))
+        radius = geometry.curve_radius(sw, p["curvature"])
         pts = []
         for i in range(cols + 1):
             u = i / cols - 0.5
@@ -553,7 +553,7 @@ class ControlPanel:
             if kind not in in_use:
                 menu.add_command(label=f"Desktop view {kind[4:]} (a whole desktop with big text)",
                                  command=lambda k=kind: self._add(new_panel(
-                                     k, f"Desktop view {k[4:]}", width=3.0, distance=1.6, curvature=0.65)))
+                                     k, f"Desktop view {k[4:]}", width=3.0, distance=1.6, curvature=0.2)))
         menu.add_command(label="Main monitor (whole screen - for videos)",
                          command=lambda: self._add(new_panel("main", "Main monitor")))
         menu.tk_popup(event.x_root, event.y_root)

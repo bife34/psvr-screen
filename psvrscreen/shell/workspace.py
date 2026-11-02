@@ -98,9 +98,9 @@ def _fit_in_front(panel, behind):
     panel["distance"], panel["width"], panel["height"] = distance, panel["width"] * k, panel["height"] * k
     panel["tilt"] = behind["tilt"]
     if behind["curvature"] > 0.001:
-        radius_behind = behind["distance"] / behind["curvature"]   # its circle's radius (window_curvature)
+        radius_behind = behind["width"] / (2 * math.pi * behind["curvature"])
         radius = radius_behind - (behind["distance"] - panel["distance"])
-        panel["curvature"] = clamp("curvature", panel["distance"] / radius) if radius > 0.3 else 0.0
+        panel["curvature"] = clamp("curvature", panel["width"] / (2 * math.pi * radius)) if radius > 0.3 else 0.0
     else:
         panel["curvature"] = 0.0
 
