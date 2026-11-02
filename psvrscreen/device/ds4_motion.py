@@ -20,9 +20,15 @@ from ..core.log import log_error
 SONY = 0x054C
 CONTROLLERS = (0x05C4, 0x09CC, 0x0BA0)   # DS4 v1, DS4 v2, the USB wireless adapter
 UNITS_PER_DEGREE = 16.0
-STILL_UNITS = 45          # gyro this close to its rest value: the controller is lying / held still
-BIAS_RATE = 0.02          # how fast the rest value is learned while still
-DEADZONE = 1.2            # degrees / second ignored (hand tremor)
+# The gyro's rest value ("bias", a little different on every controller) is measured while the controller is
+# really still: its readings barely change (lying on the desk; a hand always trembles more than this).
+STILL_SPREAD = 4.0        # gyro units: readings this steady mean "still"
+STILL_SECONDS = 0.6       # this long still: calibrated (first time) / the rest value is refreshed
+BIAS_RATE = 0.01          # how fast a refreshed rest value is taken over
+SMOOTH = 0.05             # running average / spread of the readings
+# Slow drift (a hand sinking without you noticing) is ignored, faster turns go through fully.
+IGNORE_BELOW = 1.5        # degrees / second
+FULL_FROM = 5.0           # degrees / second
 SEND_SECONDS = 0.008
 RETRY_SECONDS = 2.0
 TOUCHPAD_CLICK = 0x02
@@ -42,7 +48,13 @@ class DS4Motion(threading.Thread):
         self.store, self.engine = store, engine
         self.status = "DS4 laser: no DS4 found (press its PS button)"
         self._stop_event = threading.Event()
-        self._bias = None
+        self._reset()
+
+    def _reset(self):
+        self._bias = None                       # calibrated rest value, None until the first still moment
+        self._mean = None                       # running average of the readings
+        self._spread = 100.0                    # running spread of the readings
+        self._still_since = None
         self._up = np.array([0.0, 1.0, 0.0])
 
     def stop(self):
@@ -65,7 +77,8 @@ class DS4Motion(threading.Thread):
         import hid
         device = hid.device()
         device.open_path(path)
-        self.status = "DS4 laser: ready - click the touchpad to aim"
+        self._reset()
+        self.status = "DS4 laser: calibrating - put the DS4 down or hold it still a moment"
         try:
             last, pending, sent, clicked = time.perf_counter(), [0.0, 0.0], time.perf_counter(), False
             while not self._stop_event.is_set():
@@ -86,7 +99,7 @@ class DS4Motion(threading.Thread):
                 if click and not clicked:
                     self._to_look()
                 clicked = click
-                yaw, pitch = self._turn(gyro, accel, dt)
+                yaw, pitch = self._turn(gyro, accel, dt, now)
                 pending[0] += yaw
                 pending[1] += pitch
                 if now - sent >= SEND_SECONDS and (pending[0] or pending[1]):
@@ -95,19 +108,36 @@ class DS4Motion(threading.Thread):
         finally:
             device.close()
 
-    def _turn(self, gyro, accel, dt):
-        """Degrees the controller turned left (+) and up (+) since the last report."""
+    def _learn_rest(self, gyro, now):
+        """Measure the rest value while the controller is really still."""
+        if self._mean is None:
+            self._mean = gyro.copy()
+        self._spread += (np.abs(gyro - self._mean).max() - self._spread) * SMOOTH
+        self._mean += (gyro - self._mean) * SMOOTH
+        if self._spread > STILL_SPREAD:
+            self._still_since = None
+            return
+        self._still_since = self._still_since or now
+        if now - self._still_since < STILL_SECONDS:
+            return
         if self._bias is None:
-            self._bias = gyro.copy()
-        if np.abs(gyro - self._bias).max() < STILL_UNITS:
-            self._bias += (gyro - self._bias) * BIAS_RATE
+            self._bias = self._mean.copy()
+            self.status = "DS4 laser: ready - click the touchpad to aim"
+        else:
+            self._bias += (self._mean - self._bias) * BIAS_RATE
+
+    def _turn(self, gyro, accel, dt, now):
+        """Degrees the controller turned left (+) and up (+) since the last report (0 until calibrated)."""
+        self._learn_rest(gyro, now)
         norm = np.linalg.norm(accel)
         if norm > 1000:
             self._up += (accel / norm - self._up) * 0.05      # gravity, smoothed: which way is up
             self._up /= np.linalg.norm(self._up)
-        rate = (gyro - self._bias) / UNITS_PER_DEGREE       # degrees / second
-        if np.linalg.norm(rate) < DEADZONE:
+        if self._bias is None:
             return 0.0, 0.0
+        rate = (gyro - self._bias) / UNITS_PER_DEGREE       # degrees / second
+        speed = np.linalg.norm(rate)
+        rate *= min(1.0, max(0.0, (speed - IGNORE_BELOW) / (FULL_FROM - IGNORE_BELOW)))
         return float(rate @ self._up) * dt, float(rate[0]) * dt
 
     def _send(self, yaw, pitch):
