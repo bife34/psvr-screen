@@ -1,4 +1,4 @@
-"""Widgets for VR interfaces: layout containers, labels, buttons, sliders, switches.
+"""Widgets for VR interfaces: layout containers, labels, buttons, sliders, switches, seek bars.
 
 A widget has a size in image pixels and draws itself with Pillow. Interactive widgets have a stable `key`:
 views are rebuilt whenever what they show changes, and the key is how hover / press survive a rebuild.
@@ -286,3 +286,40 @@ class Handle(Widget):
     def wheel(self, ctx, e):
         if self.on_wheel:
             self.on_wheel(e)
+
+
+class SeekBar(Widget):
+    """A position bar (videos): press or drag anywhere on it to jump there. `value` and what `on_seek` gets
+    are 0..1. While dragging, the knob follows the pointer and the jump happens on release."""
+    interactive = True
+
+    def __init__(self, key, value, on_seek=None, w=600, h=theme.ROW, flex=0):
+        super().__init__(w, h, key, flex)
+        self.value, self.on_seek = value, on_seek
+
+    def _at(self, ctx, e):
+        if e.u is None:
+            return ctx.drag_start
+        x0, _, x1, _ = self.box
+        return max(0.0, min(1.0, (e.u * ctx.size[0] - x0 - 24) / max(1, x1 - x0 - 48)))
+
+    def draw(self, d, ctx):
+        x0, y0, x1, y1 = self.box
+        cy = (y0 + y1) / 2
+        t0, t1 = x0 + 24, x1 - 24
+        frac = ctx.drag_start if ctx.pressed(self.key) and ctx.drag_start is not None else self.value
+        knob = t0 + max(0.0, min(1.0, frac)) * (t1 - t0)
+        d.rounded_rectangle((t0, cy - 7, t1, cy + 7), 7, fill=theme.TRACK)
+        d.rounded_rectangle((t0, cy - 7, knob, cy + 7), 7, fill=theme.ACCENT)
+        r = 20 if ctx.hovered(self.key) or ctx.pressed(self.key) else 14
+        d.ellipse((knob - r, cy - r, knob + r, cy + r), fill=theme.FG, outline=theme.ACCENT, width=4)
+
+    def press(self, ctx, e):
+        ctx.drag_start = self._at(ctx, e)
+
+    def drag(self, ctx, e):
+        ctx.drag_start = self._at(ctx, e)
+
+    def release(self, ctx, e, inside):
+        if ctx.drag_start is not None and self.on_seek and e.button == "left":
+            self.on_seek(ctx.drag_start)

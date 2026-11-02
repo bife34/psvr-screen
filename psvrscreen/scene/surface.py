@@ -26,7 +26,7 @@ class Surface:
     color: tuple = (0.12, 0.14, 0.18, 1.0)
     opacity: float = 1.0
     layer: int = WORLD
-    shape: str = "rect"               # "rect" or "disc"
+    shape: str = "rect"               # "rect", "disc" or "sphere" (a VR video around you, render/video_sphere.py)
     uv: tuple = (0.0, 0.0, 1.0, 1.0)  # part of the texture shown (u0, v0, u1, v1) - the zoom lens uses it
     target: object = None             # gets pointer events (see shell.pointer); None = can't be pointed at
     data: dict = field(default_factory=dict)   # owner's notes (e.g. which window it belongs to)

@@ -7,3 +7,13 @@ hidapi
 pyusb
 libusb-package
 pillow
+windows-capture
+winrt-runtime
+winrt-Windows.Media.Control
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections
+winrt-Windows.Storage.Streams
+av
+sounddevice
+yt-dlp
+uiautomation

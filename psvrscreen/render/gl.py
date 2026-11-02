@@ -38,6 +38,9 @@ class Program:
     def mat4(self, name, m):
         GL.glUniformMatrix4fv(self._loc(name), 1, GL.GL_TRUE, m)
 
+    def int(self, name, value):
+        GL.glUniform1i(self._loc(name), value)
+
     def float(self, name, *values):
         {1: GL.glUniform1f, 2: GL.glUniform2f, 3: GL.glUniform3f, 4: GL.glUniform4f}[len(values)](
             self._loc(name), *values)

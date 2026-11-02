@@ -19,7 +19,7 @@ class MediaWatcher(threading.Thread):
         self._stop = False
 
     def command(self, name):
-        """name: "play_pause", "next" or "previous" (from the VR player buttons)."""
+        """name: "play_pause", "pause", "next" or "previous" (from the VR player buttons)."""
         if self._loop and self._commands:
             self._loop.call_soon_threadsafe(self._commands.put_nowait, name)
 
@@ -44,6 +44,8 @@ class MediaWatcher(threading.Thread):
                     if session is not None:
                         if name == "play_pause":
                             await session.try_toggle_play_pause_async()
+                        elif name == "pause":
+                            await session.try_pause_async()
                         elif name == "next":
                             await session.try_skip_next_async()
                         elif name == "previous":

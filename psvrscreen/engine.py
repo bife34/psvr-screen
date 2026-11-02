@@ -127,6 +127,7 @@ class DirectEngine(threading.Thread):
                 self._recenter_event.clear()
                 headset.recenter()
                 self.pointer.recenter(0.0, 0.0)
+                self.shell.recentered()
 
             # Where you look
             q = (1.0, 0.0, 0.0, 0.0) if self.straight_view else headset.orientation()
@@ -163,7 +164,7 @@ class DirectEngine(threading.Thread):
                 eye_pos = head_rot @ (np.array([side * s.ipd / 2, 0.0, 0.0]) + NECK) - NECK
                 view = np.linalg.inv(geometry.rigid(head_rot, eye_pos))
                 display.begin_eye(eye)
-                renderer.draw_eye(proj @ view, surfaces)
+                renderer.draw_eye(proj @ view, surfaces, eye)
             display.present(s.lens_k1, s.lens_k2)
             renderer.end_frame()
 

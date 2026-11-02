@@ -1,10 +1,11 @@
-"""Draws one eye's view: the room (environment) and the surfaces, in layer order."""
+"""Draws one eye's view: the room (environment) or a VR video around you, and the surfaces, in layer order."""
 import numpy as np
 from OpenGL import GL
 
 from ..core import geometry
 from ..scene.surface import INTERFACE, OVERLAY, WORLD
 from .gl import MeshCache, Mesh, Program
+from .video_sphere import VideoSphere
 
 FLOOR_Y = -1.2                         # floor below your eyes (seated), meters
 BACKGROUND = (0.02, 0.025, 0.035, 1.0)
@@ -57,6 +58,7 @@ class Renderer:
                            np.array([0, 1, 2, 0, 2, 3], np.uint32))
         self._disc = Mesh(*geometry.disc_vertices())
         self.meshes = MeshCache()
+        self._video = VideoSphere()
 
     def _mesh(self, s):
         if s.shape == "disc":
@@ -64,14 +66,21 @@ class Renderer:
         key = (round(s.width, 3), round(s.height, 3), round(s.curvature, 3))
         return self.meshes.get(key, lambda: geometry.surface_vertices(s.width, s.height, s.curvature))
 
-    def draw_eye(self, view_proj, surfaces):
+    def draw_eye(self, view_proj, surfaces, eye=0):
+        """eye: 0 left, 1 right (3D videos show each eye its own picture)."""
         GL.glClearColor(*BACKGROUND)
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
         GL.glEnable(GL.GL_DEPTH_TEST)
-        floor = self._floor_prog.use()
-        floor.mat4("mvp", view_proj)
-        floor.float("uv_rect", 0.0, 0.0, 1.0, 1.0)
-        self._floor.draw()
+        spheres = [s for s in surfaces if s.shape == "sphere"]
+        if spheres:                     # a VR video replaces the room
+            for s in spheres:
+                self._video.draw(view_proj, s, eye)
+            surfaces = [s for s in surfaces if s.shape != "sphere"]
+        else:
+            floor = self._floor_prog.use()
+            floor.mat4("mvp", view_proj)
+            floor.float("uv_rect", 0.0, 0.0, 1.0, 1.0)
+            self._floor.draw()
 
         GL.glEnable(GL.GL_BLEND)
         GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)

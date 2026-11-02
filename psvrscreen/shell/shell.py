@@ -1,7 +1,8 @@
 """The shell: the VR desktop around you.
 
 Owns the windows (one per entry of settings.panels, each showing an app's Content), the system interface
-(title bars, settings cards, dock, music player, dialogs, zoom lens) and the pointer. Every frame `update()`
+(title bars, settings cards, dock, music player, dialogs, zoom lens), the pointer and VR videos (vr_video.py:
+while one plays it replaces the room and the windows). Every frame `update()`
 brings everything up to date and returns the surfaces to draw; `overlay()` adds the pointer dot and lens
 after the pointer has handled this frame's input. Render thread only, except where noted.
 """
@@ -21,6 +22,7 @@ from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
 from .dialogs import DIALOG_DISTANCE, GlobalSettings, ListDialog
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT, Dock, Player
 from .pointer import Pointer
+from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_video
 
 BAR_LINGER_SECONDS = 1.5          # a window's title bar stays this long after the pointer leaves the window
 CARD_DISTANCE, CARD_SIDE_DEGREES = 1.2, 18   # settings card: near you, a little to the right of its window
@@ -115,11 +117,15 @@ class Shell:
         self._settings = store.get()
         self.look_yaw = 0.0                      # where you look (degrees, + = right), set by the engine
         self.aspects = {}                        # window id -> picture height / width (for the control panel)
+        self.video_detector = VideoDetector()
+        self.watch_buttons = {}                  # hwnd -> WatchButton (browser windows showing a VR video)
+        self.video = None                        # ImmersiveVideo while one plays
 
     # -- lifetime --------------------------------------------------------------------------------
     def start(self):
         self.pointer.start()
         self.media.start()
+        self.video_detector.start()
         threading.Thread(target=lambda: setattr(self, "start_apps", start_apps.load_start_apps()), daemon=True,
                          name="load-apps").start()
 
@@ -127,6 +133,8 @@ class Shell:
         """The VR picture stopped (headset off): every app window goes back to the main screen; they come
         back into VR with the next session (the saved windows stay). Render thread, GL still current."""
         self.pointer.running = False
+        self.stop_video()
+        self._release_watch_buttons()
         for wid in list(self.windows):
             self._drop(wid)
         self._close_dialog()
@@ -138,6 +146,7 @@ class Shell:
     def stop(self):
         self.pointer.stop()
         self.media.stop()
+        self.video_detector.stop()
         self.host.mover.back_all()
 
     # -- state -------------------------------------------------------------------------------------
@@ -161,6 +170,9 @@ class Shell:
             self._adopt_checked = now
             self._adopt_new_windows(s)
             s = self._settings = self.store.get()
+            self._find_browser_videos(s)
+        if self.video is not None:
+            return self.video.surfaces(now)
         surfaces = []
         selected = s.panels[s.selected]["id"] if s.panels else None
         for p in s.panels:
@@ -184,6 +196,7 @@ class Shell:
                                      data={"window_id": p["id"]})
             surfaces.append(window.surface)
             surfaces += self._chrome(p, window, now)
+            surfaces += self._watch_button(p, window)
         surfaces += self._system_ui()
         return surfaces
 
@@ -236,6 +249,30 @@ class Shell:
                                layer=INTERFACE, target=card, data={"ui": True}))
         return out
 
+    def _watch_button(self, p, window):
+        """"Watch in VR" under a browser window that shows a VR video."""
+        hwnd = getattr(window.content, "hwnd", None)
+        if hwnd not in self.video_detector.found:
+            return []
+        button = self._watch_view(hwnd, p["distance"], False)
+        s = window.surface
+        model = s.frame_at(0.5, 1.0, lift=0.02) @ geometry.translate(0, -button.height / 2 - 0.03, 0)
+        return [Surface(f"watch:{hwnd}", model, button.width, button.height, texture=button.texture,
+                        layer=INTERFACE, target=button, data={"ui": True})]
+
+    def _watch_view(self, hwnd, distance, with_title):
+        button = self.watch_buttons.get(hwnd)
+        if button is None or button.with_title != with_title:
+            if button is not None:
+                button.release()
+            button = self.watch_buttons[hwnd] = WatchButton(self, hwnd, distance, with_title)
+        button.refresh()
+        return button
+
+    def _release_watch_buttons(self, keep=()):
+        for hwnd in [h for h in self.watch_buttons if h not in keep]:
+            self.watch_buttons.pop(hwnd).release()
+
     def _system_ui(self):
         out = []
         self.dock.refresh()
@@ -247,11 +284,19 @@ class Shell:
             model = dock_model @ geometry.translate(0, self.dock.height / 2 + 0.02 + self.player.height / 2, 0)
             out.append(Surface("player", model, self.player.width, self.player.height,
                                texture=self.player.texture, layer=INTERFACE, target=self.player, data={"ui": True}))
+            in_vr = {getattr(w.content, "hwnd", None) for w in self.windows.values()}
+            outside = [h for h in self.video_detector.found if h not in in_vr]
+            if outside:   # a VR video in a browser on the main screen: offer it above the player
+                button = self._watch_view(outside[0], DOCK_DISTANCE, True)
+                model = model @ geometry.translate(0, self.player.height / 2 + 0.02 + button.height / 2, 0)
+                out.append(Surface("watch-main", model, button.width, button.height, texture=button.texture,
+                                   layer=INTERFACE, target=button, data={"ui": True}))
         else:
             self.dialog.refresh()
             out.append(Surface("dialog", geometry.translate(0, 0, -DIALOG_DISTANCE), self.dialog.width,
                                self.dialog.height, texture=self.dialog.texture, layer=INTERFACE, target=self.dialog,
                                data={"ui": True}))
+        self._release_watch_buttons(keep=self.video_detector.found)
         return out
 
     def overlay(self):
@@ -386,6 +431,33 @@ class Shell:
                 wid = self._settings.panels[self._settings.selected]["id"]
             if wid:
                 self.zoomed ^= {wid}
+
+    # -- VR videos -----------------------------------------------------------------------------------
+    def _find_browser_videos(self, s):
+        """Tell the detector which windows are browsers on YouTube (checked once a second)."""
+        self.video_detector.candidates = [hwnd for hwnd, title, exe in windows.list_open_windows()
+                                          if is_browser_video(exe, title)]
+
+    def watch_video(self, hwnd):
+        info = self.video_detector.found.get(hwnd)
+        if info is None:
+            return
+        self.stop_video()
+        self.media.command("pause")      # the browser stops playing it
+        self.settings_open.clear()
+        self._close_dialog()
+        self.video = ImmersiveVideo(self, info)
+
+    def stop_video(self):
+        """Back to the windows. Render thread (frees the video picture)."""
+        if self.video is not None:
+            self.video.close()
+            self.video = None
+
+    def recentered(self):
+        """Where you look became straight ahead (render thread)."""
+        if self.video is not None:
+            self.video.recentered()
 
     # -- moving / bending windows --------------------------------------------------------------------
     def grab_window(self, wid, e):

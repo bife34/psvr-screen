@@ -9,13 +9,14 @@ Each layer only uses the layers below it. Hardware and Windows details never lea
 
 ```
  apps/        Things you use in VR: a Windows app window, a monitor, and native VR apps (Files, ...)
- shell/       The VR "operating system": windows, placement, dock, dialogs, pointer, input routing
+ shell/       The VR "operating system": windows, placement, dock, dialogs, pointer, input routing, VR videos
  ui/          VR interface toolkit: widgets drawn for the headset's resolution (round, readable text)
  scene/       3D surfaces (a placed, maybe curved rectangle with a picture) and pointer events
- render/      OpenGL: meshes, textures, the headset window, per-eye rendering and lens correction
+ render/      OpenGL: meshes, textures, the headset window, per-eye rendering, lens correction, video sphere
  core/        Settings (saved to settings.json) and 3D math, used by everything
  device/      The hardware: PSVR USB/HID protocol, head tracking, the headset session, the DS4
- win/         Windows services: monitors, app windows, capture, input injection, mouse hook, media
+ win/         Windows services: monitors, app windows, capture, input injection, mouse hook, media, browser address
+ video/       Video playback: YouTube lookup (yt-dlp), decoding picture and sound in sync (PyAV, sounddevice)
  panel/       The control panel on the main screen (Tk)
  legacy/      The old SteamVR overlay mode (still selectable in the control panel)
 ```
@@ -58,6 +59,10 @@ goes back to the main screen until the next session.
 | Moving app windows to the VR monitor     | `win/windows.py`              |
 | Size of Windows apps in VR, click forwarding | `apps/desktop.py`, `apps/forwarding.py` |
 | Mouse / controller as VR pointer         | `shell/pointer.py`, `win/mouse_hook.py`, `device/gamepad.py` |
+| VR videos: detection, player controls    | `shell/vr_video.py`           |
+| VR video layouts (360, 180, cube, screen, 3D) | `render/video_sphere.py`  |
+| Which YouTube videos are VR, 3D check    | `video/youtube.py`            |
+| Decoding, sound, sync, seeking           | `video/player.py`             |
 
 ## Checking changes
 
