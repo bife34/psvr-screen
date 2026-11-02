@@ -67,7 +67,7 @@ class Settings:
     auto_add_windows: bool = True   # while you wear the headset, newly opened app windows go into VR
     sharp_text: bool = True     # big round text: VR monitor at 2560x1440 225%, windows sized for the headset
     shortcuts: dict = field(default_factory=lambda: dict(DEFAULT_SHORTCUTS))   # action -> "Ctrl+Alt+P"
-    curve_version: int = 3
+    curve_version: int = 4
     watching: list = field(default_factory=list)   # videos stopped partway, newest first: {path, position,
                                                    # duration, projection, stereo} (never in private mode)
     app_profiles: dict = field(default_factory=dict)   # app exe -> its last look (size, text, curve, locks...)
@@ -172,7 +172,17 @@ def clamp(name, value):
     return max(lo, min(hi, value))
 
 
-CURVE_VERSION = 3   # 2 (a few hours on 2026-11-02): curvature was a circle around you, radius distance / curve
+CURVE_VERSION = 4   # 2 (a few hours on 2026-11-02): curvature was a circle around you, radius distance / curve;
+                    # before 4 the distance was to the window's middle, now to the middle of its box
+
+
+def _distance_to_box_middle(settings):
+    """Settings from before version 4: the same place for every window, its distance now to its box's middle."""
+    from .geometry import bend_depth
+    for look in [*settings.panels, *settings.app_profiles.values()]:
+        if look.get("width") and look.get("distance") is not None:
+            look["distance"] = clamp("distance", look["distance"] - bend_depth(look["width"],
+                                                                              look.get("curvature", 0.0)) / 2)
 
 
 def _curves_back_to_bends(settings):
@@ -242,8 +252,11 @@ class SettingsStore:
             if not isinstance(settings.monitor, str):   # older settings used a number
                 settings.monitor = "main"
             settings.shortcuts = {**DEFAULT_SHORTCUTS, **settings.shortcuts}   # new actions get their default
-            if data.get("curve_version") == 2:
+            version = data.get("curve_version", 1)
+            if version == 2:
                 _curves_back_to_bends(settings)
+            if version < 4:
+                _distance_to_box_middle(settings)
             settings.curve_version = CURVE_VERSION
         except (OSError, ValueError):
             pass

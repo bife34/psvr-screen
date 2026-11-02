@@ -86,6 +86,20 @@ def meters_per_degree(distance):
 # -- curved surfaces --------------------------------------------------------------------------------
 # A surface is a rectangle `width` x `height` centered at its origin, facing +z (you). With curvature > 0 it
 # bends around a vertical cylinder: the edges come toward you. curvature = part of a full circle it covers.
+def bend_depth(width, curvature):
+    """How far a curved surface's edges come toward you from its middle (m): the depth of its box."""
+    radius = curve_radius(width, curvature)
+    return 0.0 if radius is None else radius * (1 - math.cos(width / (2 * radius)))
+
+
+def window_model(p):
+    """Where a window sits. Its distance is to the middle of its box (halfway between its middle and its curved
+    edges), and it scales around that point: changing its size makes the whole window - curve included - bigger
+    or smaller in place, its box staying at the same depth."""
+    return (placement(p["yaw"], p["height"], p["distance"], p.get("turn", 0.0), p["tilt"], p.get("roll", 0.0))
+            @ translate(0, 0, -bend_depth(p["width"], p["curvature"]) / 2))
+
+
 def curve_radius(width, curvature):
     return width / (2 * math.pi * curvature) if curvature > 0.001 else None
 

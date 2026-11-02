@@ -222,12 +222,13 @@ class Viewer3D:
         sw, sh = p["width"], p["width"] * aspect
         cols = 24
         radius = geometry.curve_radius(sw, p["curvature"])
+        back = geometry.bend_depth(sw, p["curvature"]) / 2   # it sits by the middle of its box (geometry.window_model)
         pts = []
         for i in range(cols + 1):
             u = i / cols - 0.5
             if radius:
                 theta = u * sw / radius
-                pts.append((radius * math.sin(theta), radius * (1 - math.cos(theta))))
+                pts.append((radius * math.sin(theta), radius * (1 - math.cos(theta)) - back))
             else:
                 pts.append((u * sw, 0.0))
         fill = SCREEN_FILL if selected else "#2b3442"

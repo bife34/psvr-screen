@@ -257,8 +257,7 @@ class Shell:
             aspect = window.content.aspect
             self.aspects[p["id"]] = aspect
             height = p["width"] * aspect
-            model = geometry.placement(p["yaw"], p["height"], p["distance"], p.get("turn", 0.0), p["tilt"],
-                                       p.get("roll", 0.0))
+            model = geometry.window_model(p)
             if p["id"] == selected and len(s.panels) > 1:
                 surfaces.append(Surface("frame:" + p["id"], model @ geometry.translate(0, 0, -0.01),
                                         p["width"] + 0.06, height + 0.06, p["curvature"], color=POINTER_BLUE))
