@@ -28,8 +28,8 @@ from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT
 BROWSERS = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"}
 CHECK_SECONDS = 2.0
 CONTROLS_SECONDS = 4.0             # controls stay this long after the pointer last moved
-CONTROLS_WIDTH = 1500
-SIDE_WIDTH = 520                   # controls: title on the left, settings / exit on the right
+CONTROLS_WIDTH = 1580
+SIDE_WIDTH = 560                   # controls: title on the left, settings / mouse / exit on the right
 PANEL_WIDTH = 1120                 # video settings
 PANEL_GAP = 0.02                   # m between the controls and the settings above them
 SKIP_SECONDS = 10
@@ -218,7 +218,7 @@ def _time(seconds):
 
 class Controls(View):
     """  0:41 ━━━━━━━━━━━●──────────────── 7:52
-         Title · status          ⟲10  (▶)  10⟳          ⚙  ⟳  ✕ Exit   """
+         Title · status          ⟲10  (▶)  10⟳        ⚙  ⟳  🖱 PC  ✕ Exit   """
 
     def __init__(self, video):
         super().__init__(distance=DOCK_DISTANCE)
@@ -263,6 +263,7 @@ class Controls(View):
                      button("settings", icon=Icon.SETTINGS, action=v.toggle_settings, selected=v.settings_open,
                             w=h + 10),
                      button("recenter", icon=Icon.RECENTER, action=v.shell.recenter, w=h + 10),
+                     button("mouse", "PC", Icon.MOUSE, action=lambda: v.shell.dock_action("mouse_to_pc")),
                      button("exit", "Exit", Icon.CLOSE, action=v.shell.stop_video, style="danger")],
                     w=SIDE_WIDTH, h=h, gap=6)
         buttons = Row([about, Spacer(flex=1), center, Spacer(flex=1), right], w=CONTROLS_WIDTH, h=h + 14)
