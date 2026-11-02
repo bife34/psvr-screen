@@ -1,4 +1,5 @@
 """The dock (always below in front of you) and the music player just above it."""
+from ..core.settings import shown_title
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
@@ -10,8 +11,8 @@ SIDE_WIDTH = int(theme.BAR * 3.4)
 
 
 class Dock(View):
-    """Settings, Recenter, Apps, Add window, Videos | one tab per window (click: show / select, x: close) |
-    Mouse -> PC"""
+    """Settings, Recenter, Apps, Add window | one tab per window (click: show / select, x: close) | Mouse -> PC
+    (no Videos button: the Videos app opens from Apps, so nobody sees what you watch)"""
 
     def __init__(self, shell):
         super().__init__(distance=DOCK_DISTANCE)
@@ -20,7 +21,8 @@ class Dock(View):
     def state(self):
         s = self.shell.settings()
         selected = s.panels[s.selected]["id"] if s.panels else None
-        return tuple((p["id"], p["title"], p["source"], p.get("shown", True)) for p in s.panels), selected
+        return (tuple((p["id"], p["title"], p["source"], p.get("shown", True)) for p in s.panels), selected,
+                s.private_mode)
 
     def build(self):
         shell = self.shell
@@ -37,7 +39,7 @@ class Dock(View):
             wid, shown = p["id"], p.get("shown", True)
             icon = Icon.MONITOR if p["source"] in ("main", "view1", "view2") else Icon.WINDOW
             tabs.append(Row([
-                Button("tab:" + wid, p["title"] or "Window", icon, h=h, flex=1, size=theme.TEXT - 4, style="flat",
+                Button("tab:" + wid, shown_title(p["title"], p.get("exe"), s.private_mode), icon, h=h, flex=1, size=theme.TEXT - 4, style="flat",
                        muted=not shown, on_click=lambda wid=wid: shell.show_window(wid)),
                 Button("close:" + wid, icon=Icon.CLOSE, w=int(h * 0.8), h=h, size=theme.SMALL - 6, style="danger",
                        on_click=lambda wid=wid: shell.window_action(wid, "close")),
@@ -46,7 +48,6 @@ class Dock(View):
                     side("recenter", Icon.RECENTER, "Recenter"),
                     side("apps", Icon.APPS, "Apps"),
                     side("add_window", Icon.ADD, "Add window"),
-                    side("videos", Icon.VIDEO, "Videos"),
                     *tabs,
                     side("mouse_to_pc", Icon.MOUSE, "Mouse → PC")],
                    gap=8, pad=6, h=theme.BAR, bg=theme.BG)
@@ -61,7 +62,7 @@ class Player(View):
 
     def state(self):
         playing = self.shell.media.now_playing
-        return tuple(sorted(playing.items())) if playing else None
+        return (tuple(sorted(playing.items())) if playing else None), self.shell.settings().private_mode
 
     def build(self):
         playing = self.shell.media.now_playing
@@ -69,6 +70,8 @@ class Player(View):
         if playing:
             # Title and artist on one line: two lines would need fonts too small to read on the PSVR.
             text = playing["title"] + (f"  ·  {playing['artist']}" if playing["artist"] else "")
+            if self.shell.settings().private_mode:
+                text = "Playing" if playing["playing"] else "Paused"
             info = Label(text, size=theme.TEXT - 4, h=h, flex=1)
         else:
             info = Label("Nothing playing", size=theme.TEXT - 4, color=theme.MUTED, h=h, flex=1)

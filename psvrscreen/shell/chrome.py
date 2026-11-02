@@ -1,6 +1,6 @@
 """What the shell adds to every window: the title bar (shown while you point at the window) and the
 settings card. Both are views; `shell` is the Shell they act on."""
-from ..core.settings import LIMITS, locked
+from ..core.settings import LIMITS, locked, shown_title
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
@@ -33,7 +33,7 @@ class TitleBar(View):
 
     def state(self):
         p = self.shell.panel(self.window_id) or {}
-        return (p.get("title"), p.get("lock_position"), p.get("lock_look"),
+        return (p.get("title"), self.shell.settings().private_mode, p.get("lock_position"), p.get("lock_look"),
                 self.window_id in self.shell.zoomed, self.window_id in self.shell.settings_open)
 
     def build(self):
@@ -47,7 +47,8 @@ class TitleBar(View):
                           on_click=lambda: s.window_action(wid, action))
 
         title = Row([Label(Icon.GRIP, size=theme.SMALL, color=theme.MUTED, w=h, h=h, align="center", icon=True),
-                     Label(p.get("title") or "Window", h=h, flex=1)], h=h, flex=1, align="stretch")
+                     Label(shown_title(p.get("title"), p.get("exe"), self.shell.settings().private_mode), h=h, flex=1)],
+                    h=h, flex=1, align="stretch")
         grip = Handle("move", title, flex=1, h=h, hover_bg=None if pos_locked else theme.HOVER,
                       on_press=lambda e: s.grab_window(wid, e), on_drag=s.gesture_drag,
                       on_release=s.gesture_release, on_wheel=s.gesture_wheel)

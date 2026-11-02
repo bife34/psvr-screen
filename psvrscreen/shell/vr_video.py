@@ -18,7 +18,7 @@ import time
 import numpy as np
 
 from ..core import geometry
-from ..core.settings import LIMITS, Settings, clamp
+from ..core.settings import LIMITS, Settings, clamp, shown_title
 from ..render.video_sphere import VideoTexture
 from ..scene.surface import INTERFACE, Surface
 from ..ui import theme
@@ -130,7 +130,7 @@ class WatchButton(View):
 
     def state(self):
         info = self.shell.video_detector.found.get(self.hwnd)
-        return info and (info.key, info.projection, info.stereo)
+        return info and (info.key, info.projection, info.stereo, self.shell.settings().private_mode)
 
     def build(self):
         info = self.shell.video_detector.found.get(self.hwnd)
@@ -138,7 +138,8 @@ class WatchButton(View):
             return Row([], w=1, h=1)
         kind = (STEREO_NAMES[info.stereo] + " " if info.stereo not in ("mono", None) else "") + \
             PROJECTION_NAMES[info.projection]
-        text = f"Watch in VR  ·  {kind}" + (f"  ·  {info.title}" if self.with_title else "")
+        private = self.shell.settings().private_mode
+        text = f"Watch in VR  ·  {kind}" + (f"  ·  {info.title}" if self.with_title and not private else "")
         h = theme.BAR - 12
         return Row([Button("watch", text, Icon.PLAY, h=h, w=1400 if self.with_title else None,
                            selected=True, on_click=lambda: self.shell.watch_video(self.hwnd)),
@@ -353,7 +354,7 @@ class Controls(View):
     def state(self):
         v, p = self.video, self.video.player
         return (int(p.position), p.paused, p.ended, p.buffering, p.error, v.settings_open, v.recognizing,
-                v.projection, v.stereo, self.ctx.drag_start)
+                v.projection, v.stereo, v.shell.settings().private_mode, self.ctx.drag_start)
 
     def build(self):
         v, p = self.video, self.video.player
@@ -385,7 +386,8 @@ class Controls(View):
                             Label(_time(duration) if duration else "live", size=theme.SMALL, color=theme.MUTED,
                                   w=150, h=theme.ROW)],
                            w=CONTROLS_WIDTH, h=theme.ROW, gap=8)
-        about = Column([Label(v.info.title, size=theme.SMALL, h=int(theme.ROW * 0.8), w=SIDE_WIDTH, indent=16),
+        title = shown_title(v.info.title, private=v.shell.settings().private_mode)
+        about = Column([Label(title, size=theme.SMALL, h=int(theme.ROW * 0.8), w=SIDE_WIDTH, indent=16),
                         Label(status, size=theme.SMALL - 4, color=color, h=int(theme.ROW * 0.7), w=SIDE_WIDTH,
                               indent=16)], w=SIDE_WIDTH, h=h)
         play = Button("play", icon=Icon.PAUSE if playing else Icon.PLAY, w=h + 14, h=h + 14, style="primary",

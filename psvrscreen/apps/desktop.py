@@ -27,14 +27,14 @@ NEW_WINDOW_DISTANCE = 2.5         # new windows open this far away (big windows 
 NEW_WINDOW_MAX_DEGREES = 50       # a newly opened window is at most half your view (others stay visible)
 WINDOW_BOTTOM_DEGREES = 12        # new windows end at most this far below eye level (above the dock)
 MIN_WINDOW_WIDTH = 480            # pixels
-MAX_WINDOW_DEGREES = 110          # the VR window never grows wider than this when following the app
+MAX_WINDOW_DEGREES = 70           # the VR window never grows wider than this when following the app
 FOLLOW_CHECK_SECONDS = 1.0        # how often to look whether the app was resized
 WM_CLOSE = 0x0010
 
 
 def new_panel_for(hwnd, title, exe):
     """A VR window for an app window, at its Windows size and shape (see the module doc)."""
-    w_pt, h_pt = windows.normal_size_points(hwnd)
+    w_pt, h_pt = windows.shown_size_points(hwnd)
     aspect = h_pt / w_pt
     vr_w, vr_h, scale = displays.VR_MONITOR_MODE
     pixels = w_pt * scale / 100
@@ -125,6 +125,12 @@ class DesktopWindow(Content):
         factor and takes its shape - instead of forcing the app back."""
         actual_w, actual_h = windows.actual_size(self.hwnd)
         if abs(actual_w - size[0]) <= max(24, size[0] * 0.04) and abs(actual_h - size[1]) <= max(24, size[1] * 0.04):
+            return
+        vr_w, vr_h, _ = displays.VR_MONITOR_MODE
+        if actual_w > vr_w or actual_h > vr_h:
+            # Bigger than the VR monitor (a player sizing itself to an 8K video): not followed - it gets the
+            # size it had, so one app can't blow up the whole layout.
+            self.host.mover.to_vr_monitor(self.hwnd, size, self.host.slot_of(self.window_id))
             return
         k = actual_w / size[0]
         width = min(panel["width"] * k, geometry.width_for_degrees(MAX_WINDOW_DEGREES, panel["distance"]))

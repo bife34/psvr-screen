@@ -18,8 +18,23 @@ SHORTCUT_ACTIONS = {
     "mouse_vr": "Mouse into VR / back to the PC screen",
     "zoom": "Zoom lens on the window under the pointer",
     "recenter": "Recenter everything in front of me",
+    "private": "Private mode on / off (hides what you watch)",
 }
-DEFAULT_SHORTCUTS = {"mouse_vr": "Ctrl+Alt+P", "zoom": "Ctrl+Alt+Z", "recenter": "Ctrl+Alt+R"}
+DEFAULT_SHORTCUTS = {"mouse_vr": "Ctrl+Alt+P", "zoom": "Ctrl+Alt+Z", "recenter": "Ctrl+Alt+R", "private": "Ctrl+Alt+H"}
+APP_NAMES = {"chrome.exe": "Chrome", "msedge.exe": "Edge", "firefox.exe": "Firefox", "brave.exe": "Brave",
+             "opera.exe": "Opera", "vivaldi.exe": "Vivaldi", "explorer.exe": "File Explorer", "vlc.exe": "VLC",
+             "code.exe": "VS Code"}
+
+
+def shown_title(title, exe=None, private=False):
+    """A window's or video's title as shown anywhere. Private: only the app's name (a browser's title is
+    the page you're on), or just "Video"."""
+    if not private:
+        return title or "Window"
+    if not exe:
+        return "Video"
+    name = exe.lower()
+    return APP_NAMES.get(name) or name.rsplit(".", 1)[0].capitalize()
 
 # Per-panel layout fields
 PANEL_KEYS = ("yaw", "width", "distance", "height", "curvature", "tilt", "turn", "roll", "opacity", "text_zoom")
@@ -66,6 +81,7 @@ class Settings:
     lens_k1: float = 0.22
     lens_k2: float = 0.24
     # VR videos
+    private_mode: bool = False           # hide what you watch: titles become app names / "Video", no history
     video_screen_degrees: float = 60.0   # "screen" videos: how wide the screen looks
     video_distance: float = 10.0         # how far away the video is (m): sphere radius / screen distance
     video_screen_curve: float = 0.0      # "screen" videos: 0 = flat, 1 = bent around you (all of it as far)

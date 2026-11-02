@@ -42,6 +42,20 @@ def normal_size_points(hwnd):
     return w * 100 / scale, h * 100 / scale
 
 
+def shown_size_points(hwnd):
+    """The size you see the window at in Windows, in points: a maximized window counts at its maximized size
+    (its normal size is the smaller one it gets back when un-maximized)."""
+    if not user32.IsZoomed(hwnd):
+        return normal_size_points(hwnd)
+    r = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    w, h = max(1, r.right - r.left), max(1, r.bottom - r.top)
+    monitor = next((d for d in displays.list_displays() if d.left <= (r.left + r.right) // 2 < d.left + d.width),
+                   None)
+    scale = (displays.get_scale(monitor) or 100) if monitor else 100
+    return w * 100 / scale, h * 100 / scale
+
+
 class WINDOWPLACEMENT(ctypes.Structure):
     _fields_ = [("length", wintypes.UINT), ("flags", wintypes.UINT), ("showCmd", wintypes.UINT),
                 ("ptMinPosition", wintypes.POINT), ("ptMaxPosition", wintypes.POINT),

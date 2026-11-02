@@ -484,6 +484,8 @@ class Shell:
     def _on_shortcut(self, action):
         if action == "recenter":
             self.recenter()
+        elif action == "private":
+            self.store.update(private_mode=not self._settings.private_mode)
         elif action == "zoom":
             hit = self.pointer.hit
             wid = hit[0].data.get("window_id") if hit else None

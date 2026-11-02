@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..apps.desktop import new_panel_for
-from ..core.settings import LIMITS, SHORTCUT_ACTIONS, new_panel
+from ..core.settings import LIMITS, SHORTCUT_ACTIONS, new_panel, shown_title
 from ..shell import workspace
 from ..win import displays, windows
 from ..win import shortcuts as shortcut_keys
@@ -70,6 +70,7 @@ class Viewer3D:
     def __init__(self, canvas, store):
         self.c = canvas
         self.store = store
+        self.hide_titles = False   # set by the control panel (private mode / a video playing)
         self.yaw, self.pitch, self.radius = math.radians(40), math.radians(22), 4.2
         canvas.bind("<ButtonPress-1>", self._press)
         canvas.bind("<B1-Motion>", self._drag)
@@ -238,7 +239,8 @@ class Viewer3D:
         for strip in (top, bottom):
             edges += [(a, b, edge, 2 if selected else 1) for a, b in zip(strip, strip[1:])]
         edges += [(top[0], bottom[0], edge, 2 if selected else 1), (top[-1], bottom[-1], edge, 2 if selected else 1)]
-        labels.append((self._place(p, 0, 0, 0), _short(p["title"]), TEXT if selected else MUTED))
+        labels.append((self._place(p, 0, 0, 0), _short(shown_title(p["title"], p.get("exe"), self.hide_titles)),
+                       TEXT if selected else MUTED))
 
 
 class ControlPanel:
@@ -494,6 +496,11 @@ class ControlPanel:
             self.mouse_button.config(text=f"🖱  Send mouse to VR   ({keys})", bg=ACCENT)
 
     # -- bottom bar --------------------------------------------------------------------------
+    def _hide_titles(self):
+        """Private mode, or a video playing in VR: the PC screen shows nothing about what you watch."""
+        shell = getattr(self.engine, "shell", None)
+        return self.store.get().private_mode or getattr(shell, "video", None) is not None
+
     def _build_bar(self, s):
         for child in self.bar.winfo_children():
             child.destroy()
@@ -503,7 +510,8 @@ class ControlPanel:
             tab = tk.Frame(self.bar, bg=bg)
             tab.pack(side="left", padx=(8, 0), pady=8)
             icon = "▣" if p["source"] == "window" else "🖥"
-            label = tk.Label(tab, text=f" {icon}  {_short(p['title'], 24)} ", bg=bg,
+            title = shown_title(p["title"], p.get("exe"), self._hide_titles())
+            label = tk.Label(tab, text=f" {icon}  {_short(title, 24)} ", bg=bg,
                              fg=TEXT if shown else MUTED, font=("Segoe UI", 10), cursor="hand2", pady=6)
             label.pack(side="left")
             label.bind("<Button-1>", lambda e, i=i: self.store.update(selected=i))
@@ -571,7 +579,9 @@ class ControlPanel:
             self._dirty_since = None
 
         s = self.store.get()
-        bar_key = (s.selected, tuple((p["id"], p["title"], p.get("shown", True)) for p in s.panels))
+        bar_key = (s.selected, tuple((p["id"], p["title"], p.get("shown", True)) for p in s.panels),
+                   self._hide_titles())
+        self.viewer.hide_titles = self._hide_titles()
         if bar_key != self._bar_key:
             self._bar_key = bar_key
             self._build_bar(s)

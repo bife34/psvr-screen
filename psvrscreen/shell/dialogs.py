@@ -16,6 +16,8 @@ GLOBAL_SETTINGS_ROWS = [
     ("title", None, "Mouse & controller", None),
     ("slider", "mouse_speed", "Mouse speed", "{:.1f}x"),
     ("toggle", "auto_add_windows", "Apps opened from VR open in VR", None),
+    ("title", None, "Privacy", None),
+    ("toggle", "private_mode", "Private mode: hide titles, no history", None),
     ("title", None, "Picture", None),
     ("slider", "lens_fov", "Field of view", "{:.0f}°"),
     ("slider", "ipd", "Eye distance", "{:.3f} m"),
