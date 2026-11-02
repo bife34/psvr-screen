@@ -1,5 +1,7 @@
 PSVR Screen - your PC in the PS4 VR headset (PSVR), without SteamVR.
 
+A rudimentary app, but it's working. Feel free to improve it: it's open source.
+
 YOU NEED
   - A PSVR (the PS4 one) with its processor box, connected to the PC by HDMI and USB
   - Windows 10 or 11, 64-bit
