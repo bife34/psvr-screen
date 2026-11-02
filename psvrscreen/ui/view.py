@@ -26,6 +26,7 @@ class _Context:
         self.press = None        # key of the widget being pressed
         self.drag_start = None   # value a slider had when it was grabbed
         self.size = (1, 1)       # the view's size in pixels (widgets turn pointer u, v into pixels with it)
+        self.canvas = None       # the image being drawn (pictures are pasted onto it)
 
     def hovered(self, key):
         return key is not None and key == self.hover
@@ -76,7 +77,9 @@ class View:
         self.root.layout(0, 0, w, h)
         self.size_px = self.ctx.size = (w, h)
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        self.ctx.canvas = img
         self.root.draw(ImageDraw.Draw(img), self.ctx)
+        self.ctx.canvas = None
         if self.texture is None:
             self.texture = Texture()
         self.texture.upload(img)

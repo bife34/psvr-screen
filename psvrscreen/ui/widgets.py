@@ -1,9 +1,12 @@
-"""Widgets for VR interfaces: layout containers, labels, buttons, sliders, switches, seek bars.
+"""Widgets for VR interfaces: layout containers, labels, buttons, sliders, switches, seek bars, and the
+pieces of app pages: pictures, tiles, cards, badges.
 
 A widget has a size in image pixels and draws itself with Pillow. Interactive widgets have a stable `key`:
 views are rebuilt whenever what they show changes, and the key is how hover / press survive a rebuild.
 Callbacks (on_click, on_change) run on the render thread.
 """
+from PIL import Image, ImageDraw
+
 from . import theme
 
 SLIDER_FULL_RANGE_DEGREES = 25.0   # pointer movement that takes a slider from one end to the other
@@ -62,10 +65,12 @@ class _Linear(Widget):
     Children with `flex` share the space left over when the container has a fixed size."""
     horizontal = True
 
-    def __init__(self, items, gap=0, pad=0, bg=None, radius=0, w=None, h=None, align="center", flex=0, key=None):
+    def __init__(self, items, gap=0, pad=0, bg=None, radius=0, w=None, h=None, align="center", flex=0, key=None,
+                 border=None):
         super().__init__(w or 0, h or 0, key, flex)
         self.items = [i for i in items if i is not None]
         self.gap, self.pad, self.bg, self.radius, self.align = gap, pad, bg, radius, align
+        self.border = border     # an outline color (panels: theme.EDGE)
         self.fixed_w, self.fixed_h = w, h
 
     def children(self):
@@ -102,8 +107,16 @@ class _Linear(Widget):
 
     def draw(self, d, ctx):
         if self.bg:
-            d.rounded_rectangle(self.box, self.radius, fill=self.bg)
+            d.rounded_rectangle(self.box, self.radius, fill=self.bg, outline=self.border,
+                                width=2 if self.border else 0)
         super().draw(d, ctx)
+
+
+def Panel(items, w=None, h=None, pad=24, gap=theme.GAP, horizontal=False, **kw):
+    """The glass panel everything floats in (dock, dialogs, app pages): dark glass, big round corners, a fine
+    light edge."""
+    cls = Row if horizontal else Column
+    return cls(items, pad=pad, gap=gap, bg=theme.BG, radius=theme.RADIUS_PANEL, border=theme.EDGE, w=w, h=h, **kw)
 
 
 class Row(_Linear):
@@ -166,7 +179,7 @@ class Button(Widget):
         x0, y0, x1, y1 = self.box
         bg = self.background(ctx)
         if bg:
-            radius = min(x1 - x0, y1 - y0) / 2 if self.style == "primary" else theme.RADIUS
+            radius = min(x1 - x0, y1 - y0) / 2 if self.style == "primary" else min(theme.RADIUS * 1.5, (y1 - y0) / 2)
             d.rounded_rectangle(self.box, radius, fill=bg)
         color = theme.MUTED if self.muted else (theme.ACCENT_LIGHT if self.selected and not self.text else theme.FG)
         h = y1 - y0
@@ -338,3 +351,132 @@ class SeekBar(Widget):
     def release(self, ctx, e, inside):
         if ctx.drag_start is not None and self.on_seek and e.button == "left":
             self.on_seek(ctx.drag_start)
+
+
+# -- app pages: pictures, tiles, cards, badges ------------------------------------------------------------
+def _rounded(image, size, radius):
+    """`image` (PIL) scaled to fill `size` (cut to its shape), with round corners."""
+    w, h = size
+    iw, ih = image.size
+    k = max(w / iw, h / ih)
+    image = image.resize((max(1, int(iw * k)), max(1, int(ih * k))), Image.LANCZOS)
+    left, top = (image.width - w) // 2, (image.height - h) // 2
+    image = image.crop((left, top, left + w, top + h)).convert("RGBA")
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius, fill=255)
+    image.putalpha(mask)
+    return image
+
+
+class Picture(Widget):
+    """A picture (PIL image, or None while it loads: a calm placeholder with an icon) with round corners."""
+
+    def __init__(self, image, w, h, radius=theme.RADIUS_CARD, icon=None):
+        super().__init__(w, h)
+        self.image, self.radius, self.icon = image, radius, icon
+
+    def draw(self, d, ctx):
+        x0, y0, x1, y1 = (int(v) for v in self.box)
+        if self.image is None or ctx.canvas is None:
+            d.rounded_rectangle((x0, y0, x1, y1), self.radius, fill=theme.CARD)
+            if self.icon:
+                d.text(((x0 + x1) / 2, (y0 + y1) / 2), self.icon, font=theme.font(int((y1 - y0) * 0.3), True),
+                       fill=theme.DISABLED, anchor="mm")
+            return
+        picture = _rounded(self.image, (x1 - x0, y1 - y0), self.radius)
+        ctx.canvas.alpha_composite(picture, (x0, y0))
+
+
+class Badge(Widget):
+    """A small rounded label ("180° 3D", "12:31")."""
+
+    def __init__(self, text, color=theme.ACCENT, size=theme.SMALL - 8, fg=theme.FG):
+        self.text, self.color, self.size, self.fg = text, color, size, fg
+        fnt = theme.font(size)
+        super().__init__(int(fnt.getlength(text)) + 28, int(size * 1.6))
+
+    def draw(self, d, ctx):
+        if not self.text:
+            return
+        x0, y0, x1, y1 = self.box
+        d.rounded_rectangle(self.box, (y1 - y0) / 2, fill=self.color)
+        d.text(((x0 + x1) / 2, (y0 + y1) / 2), self.text, font=theme.font(self.size), fill=self.fg, anchor="mm")
+
+
+class Tile(Widget):
+    """A big launcher tile: a round colored icon and a name under it (Home)."""
+    interactive = True
+
+    def __init__(self, key, label, icon, color, on_click=None, w=300, h=300, subtitle=None):
+        super().__init__(w, h, key)
+        self.label, self.icon, self.color, self.on_click, self.subtitle = label, icon, color, on_click, subtitle
+
+    def draw(self, d, ctx):
+        x0, y0, x1, y1 = self.box
+        hovered = ctx.hovered(self.key) or ctx.pressed(self.key)
+        d.rounded_rectangle(self.box, theme.RADIUS_CARD, fill=theme.HOVER if hovered else theme.CARD)
+        cx, r = (x0 + x1) / 2, (x1 - x0) * 0.22
+        cy = y0 + (y1 - y0) * 0.38
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=self.color)
+        d.text((cx, cy), self.icon, font=theme.font(int(r * 0.95), True), fill=theme.FG, anchor="mm")
+        fnt = theme.font(theme.TEXT)
+        d.text((cx, y0 + (y1 - y0) * 0.74), theme.shorten(self.label, fnt, x1 - x0 - 24), font=fnt, fill=theme.FG,
+               anchor="mm")
+        if self.subtitle:
+            small = theme.font(theme.SMALL - 8, weight="regular")
+            d.text((cx, y0 + (y1 - y0) * 0.88), theme.shorten(self.subtitle, small, x1 - x0 - 24), font=small,
+                   fill=theme.MUTED, anchor="mm")
+
+    def release(self, ctx, e, inside):
+        if inside and self.on_click and e.button == "left":
+            self.on_click()
+
+
+class Card(Widget):
+    """A video / photo in a grid: its picture, a title under it and badges on the picture. Click: open it;
+    right click: its menu."""
+    interactive = True
+
+    def __init__(self, key, title, image, w, h, badges=(), on_click=None, on_right=None, icon=None, subtitle=None):
+        super().__init__(w, h, key)
+        self.title, self.image, self.badges, self.icon, self.subtitle = title, image, badges, icon, subtitle
+        self.on_click, self.on_right = on_click, on_right
+
+    def draw(self, d, ctx):
+        x0, y0, x1, y1 = (int(v) for v in self.box)
+        hovered = ctx.hovered(self.key) or ctx.pressed(self.key)
+        if hovered:
+            d.rounded_rectangle((x0 - 8, y0 - 8, x1 + 8, y1 + 8), theme.RADIUS_CARD + 6, fill=theme.HOVER)
+        text_h = int(theme.SMALL * (2.6 if self.subtitle else 1.6))
+        picture = Picture(self.image, x1 - x0, y1 - y0 - text_h, icon=self.icon)
+        picture.layout(x0, y0, x1 - x0, y1 - y0 - text_h)
+        picture.draw(d, ctx)
+        bx = x0 + 12
+        for text, color in self.badges:
+            badge = Badge(text, color)
+            bw, bh = badge.measure()
+            badge.layout(bx, y0 + 12, bw, bh)
+            badge.draw(d, ctx)
+            bx += bw + 8
+        fnt = theme.font(theme.SMALL)
+        ty = y1 - text_h + int(theme.SMALL * 0.8)
+        d.text((x0 + 6, ty), theme.shorten(self.title, fnt, x1 - x0 - 12), font=fnt, fill=theme.FG, anchor="lm")
+        if self.subtitle:
+            small = theme.font(theme.SMALL - 8, weight="regular")
+            d.text((x0 + 6, ty + theme.SMALL), theme.shorten(self.subtitle, small, x1 - x0 - 12), font=small,
+                   fill=theme.MUTED, anchor="lm")
+
+    def release(self, ctx, e, inside):
+        if inside and self.on_click and e.button == "left":
+            self.on_click()
+        elif inside and self.on_right and e.button == "right":
+            self.on_right()
+
+
+def Grid(items, columns, gap=theme.GAP * 2):
+    """Widgets in rows of `columns` (the last row left-aligned)."""
+    rows = []
+    for i in range(0, len(items), columns):
+        chunk = items[i:i + columns]
+        rows.append(Row(chunk, gap=gap, align="start"))
+    return Column(rows, gap=gap, align="start")

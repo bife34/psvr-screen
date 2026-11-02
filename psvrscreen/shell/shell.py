@@ -7,6 +7,7 @@ brings everything up to date and returns the surfaces to draw; `overlay()` adds 
 after the pointer has handled this frame's input. Render thread only, except where noted.
 """
 import math
+import subprocess
 import threading
 import time
 
@@ -23,6 +24,7 @@ from . import workspace
 from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
 from .dialogs import DIALOG_DISTANCE, MENU_DISTANCE, ContextMenu, GlobalSettings, ListDialog
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT, Dock, Player
+from .home import Home
 from .pointer import Pointer
 from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_video
 
@@ -410,7 +412,9 @@ class Shell:
         self.select(wid)
 
     def dock_action(self, action):
-        if action == "recenter":
+        if action == "home":
+            self._open_dialog("home", lambda: Home(self))
+        elif action == "recenter":
             self.recenter()
         elif action == "mouse_to_pc":
             self.pointer.enabled = False
@@ -422,6 +426,19 @@ class Shell:
                                                          self._launch, "Loading apps..."))
         elif action == "add_window":
             self._open_dialog("add", self._add_window_dialog)
+
+    def home_action(self, key):
+        """A tile on Home."""
+        self._close_dialog()
+        if key in apps.NATIVE_APPS:
+            self.open_native(key)
+        elif key == "files":
+            self._launched_at = time.monotonic()   # its window comes into VR (see _adopt_new_windows)
+            subprocess.Popen(["explorer.exe"])
+        elif key == "settings":
+            self.dock_action("global_settings")
+        else:
+            self.dock_action(key)                  # apps, add_window
 
     def _open_dialog(self, kind, make):
         opening = getattr(self.dialog, "kind", None) != kind

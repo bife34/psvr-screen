@@ -1,60 +1,108 @@
 """Dialogs opened from the dock: settings for everything, and lists to pick from (Add window, Apps).
 They appear at eye level in front of you, closer than everything else. And the right-click menu."""
-from ..core.settings import LIMITS
+from ..core.settings import DEFAULT_SHORTCUTS, LIMITS, SHORTCUT_ACTIONS
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Label, Row, Slider, Spacer, Toggle
+from ..ui.widgets import Button, Column, Label, Panel, Row, Slider, Spacer, Toggle
 
 DIALOG_DISTANCE = 1.0
 MENU_DISTANCE = 0.9               # the right-click menu opens this far away, where you pointed
 MENU_WIDTH = 620
-SETTINGS_WIDTH = 1100
+SETTINGS_WIDTH = 1500
+SETTINGS_HEIGHT = 640
 LIST_WIDTH = 1100
 LIST_PAGE_SIZE = 10
 
-# (kind, field, label, format)
-GLOBAL_SETTINGS_ROWS = [
-    ("title", None, "Mouse & controller", None),
-    ("slider", "mouse_speed", "Mouse speed", "{:.1f}x"),
-    ("toggle", "auto_add_windows", "Apps opened from VR open in VR", None),
-    ("title", None, "Privacy", None),
-    ("toggle", "private_mode", "Private mode: hide titles, no history", None),
-    ("title", None, "Picture", None),
-    ("slider", "lens_fov", "Field of view", "{:.0f}°"),
-    ("slider", "ipd", "Eye distance", "{:.3f} m"),
-    ("title", None, "Line up your eyes (turn the test on: make the red and green cross one)", None),
-    ("toggle", "eye_test", "Eye alignment test", None),
-    ("slider", "lens_apart", "Eyes apart", "{:+.3f}"),
-    ("slider", "lens_height", "Eye height", "{:+.3f}"),
-    ("title", None, "Layout", None),
-    ("toggle", "follow_head", "Windows follow my head", None),
+# Settings, by section: (kind, field, label, format); kind "title" / "slider" / "toggle" / "note"
+SETTINGS_SECTIONS = [
+    ("display", "Display & eyes", Icon.EYE, [
+        ("slider", "lens_fov", "Field of view", "{:.0f}°"),
+        ("slider", "ipd", "Eye distance", "{:.3f} m"),
+        ("title", None, "Line up your eyes", None),
+        ("note", None, "Turn the test on, then move the sliders until the red and green cross are one.", None),
+        ("toggle", "eye_test", "Eye alignment test", None),
+        ("slider", "lens_apart", "Eyes apart", "{:+.3f}"),
+        ("slider", "lens_height", "Eye height", "{:+.3f}"),
+    ]),
+    ("controls", "Controls", Icon.MOUSE, [
+        ("slider", "mouse_speed", "Mouse speed", "{:.1f}x"),
+        ("toggle", "auto_add_windows", "Apps opened from VR open in VR", None),
+        ("toggle", "follow_head", "Windows follow my head", None),
+        ("title", None, "Keyboard shortcuts", None),
+        ("shortcuts", None, None, None),
+    ]),
+    ("privacy", "Privacy", Icon.PRIVATE, [
+        ("toggle", "private_mode", "Private mode", None),
+        ("note", None, "Titles become the app's name or \"Video\", the Videos app shows no Recent, and the PC "
+                       "screen shows nothing about what you watch.", None),
+    ]),
+    ("about", "About", Icon.INFO, [
+        ("note", None, "PSVR Screen - your PC in the PS4 VR headset, without SteamVR.", None),
+        ("note", None, "Left click: use things. Right click: options. Drag empty space in a video to move it.", None),
+    ]),
 ]
+SECTION_WIDTH = 380
 
 
 class GlobalSettings(View):
+    """Settings: sections on the left (like the settings of a phone), the chosen one's settings on the right."""
+
     def __init__(self, shell):
         super().__init__(distance=DIALOG_DISTANCE)
         self.shell = shell
+        self.section = SETTINGS_SECTIONS[0][0]
 
     def state(self):
         s = self.shell.settings()
-        return tuple(getattr(s, key) for kind, key, *_ in GLOBAL_SETTINGS_ROWS if key)
+        keys = [key for _, _, _, rows in SETTINGS_SECTIONS for kind, key, *_ in rows if key]
+        return (self.section, tuple(sorted(s.shortcuts.items()))) + tuple(getattr(s, key) for key in keys)
+
+    def _show(self, section):
+        self.section = section
 
     def build(self):
         s, store = self.shell.settings(), self.shell.store
-        rows = [Label("Settings", size=theme.TITLE, w=SETTINGS_WIDTH, h=int(theme.ROW * 1.2), indent=24)]
-        for kind, key, label, fmt in GLOBAL_SETTINGS_ROWS:
+        w = SETTINGS_WIDTH - SECTION_WIDTH
+        nav = [Label("Settings", size=theme.TITLE, w=SECTION_WIDTH, h=int(theme.ROW * 1.4), indent=12)]
+        for key, name, icon, _ in SETTINGS_SECTIONS:
+            nav.append(Button("section:" + key, name, icon, w=SECTION_WIDTH, h=theme.ROW + 6, size=theme.TEXT - 4,
+                              style="flat", selected=key == self.section, on_click=lambda key=key: self._show(key)))
+        rows = []
+        for kind, key, label, fmt in next(r for k, _, _, r in SETTINGS_SECTIONS if k == self.section):
             if kind == "title":
-                rows.append(Label(label, size=theme.SMALL, color=theme.ACCENT, w=SETTINGS_WIDTH, indent=24))
+                rows.append(Label(label, size=theme.SMALL, color=theme.ACCENT_LIGHT, w=w, indent=24))
+            elif kind == "note":
+                rows += [Label(line, size=theme.SMALL - 6, color=theme.MUTED, w=w, h=int(theme.SMALL * 1.2), indent=24)
+                         for line in _wrap(label, theme.font(theme.SMALL - 6), w - 48)]
+            elif kind == "shortcuts":
+                for action, name in SHORTCUT_ACTIONS.items():
+                    keys = s.shortcuts.get(action, DEFAULT_SHORTCUTS.get(action, ""))
+                    rows.append(Row([Label(name, size=theme.SMALL - 4, flex=1, indent=24),
+                                     Label(keys, size=theme.SMALL - 4, color=theme.ACCENT_LIGHT)], w=w,
+                                    h=theme.ROW - 8))
             elif kind == "slider":
                 lo, hi = LIMITS[key]
-                rows.append(Slider(key, label, getattr(s, key), lo, hi, fmt, w=SETTINGS_WIDTH,
+                rows.append(Slider(key, label, getattr(s, key), lo, hi, fmt, w=w,
                                    on_change=lambda v, k=key: store.update(**{k: v})))
             else:
-                rows.append(Toggle(key, label, getattr(s, key), w=SETTINGS_WIDTH,
+                rows.append(Toggle(key, label, getattr(s, key), w=w,
                                    on_change=lambda v, k=key: store.update(**{k: v})))
-        return Column(rows, pad=12, bg=theme.BG, radius=theme.RADIUS)
+        content = Column(rows, gap=4, align="start", h=SETTINGS_HEIGHT)
+        return Panel([Column(nav, gap=6, align="start", h=SETTINGS_HEIGHT), content], horizontal=True, pad=28,
+                     gap=24, align="start")
+
+
+def _wrap(text, fnt, width):
+    """Text split into lines that fit `width` pixels."""
+    lines, line = [], ""
+    for word in text.split():
+        if line and fnt.getlength(line + " " + word) > width:
+            lines.append(line)
+            line = word
+        else:
+            line = f"{line} {word}".strip()
+    return lines + ([line] if line else [])
 
 
 class ListDialog(View):
@@ -93,7 +141,7 @@ class ListDialog(View):
                                style="flat", on_click=lambda p=payload: self.on_pick(p)))
         if pages > 1:   # same height on every page
             rows.append(Spacer(h=(LIST_PAGE_SIZE - len(shown)) * (row_h - 6 + 4)))
-        return Column(rows, pad=12, gap=4, bg=theme.BG, radius=theme.RADIUS, w=LIST_WIDTH + 24)
+        return Panel(rows, pad=20, gap=4, w=LIST_WIDTH + 40)
 
 
 class ContextMenu(View):
@@ -114,4 +162,4 @@ class ContextMenu(View):
         for i, (label, icon, action, style) in enumerate(self.items):
             rows.append(Button(f"menu:{i}", label, icon, w=MENU_WIDTH, h=h, size=theme.TEXT - 4, style=style,
                                on_click=lambda a=action: self._run(a)))
-        return Column(rows, pad=10, gap=2, bg=theme.BG, radius=theme.RADIUS)
+        return Panel(rows, pad=14, gap=2)
