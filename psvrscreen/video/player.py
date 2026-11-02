@@ -49,6 +49,7 @@ class VideoPlayer:
         self._generation = 0                     # +1 per seek: threads drop what they decoded before
         self._started = -1                       # generation whose start (first picture) is known
         self._paused = False
+        self.volume = 1.0                        # 1 = as recorded
         self._wall = (time.monotonic(), start)   # clock without sound: (when, position then)
         self._video_done = self._audio_done = False
         self._stop = False
@@ -261,7 +262,7 @@ class VideoPlayer:
             while filled < count and self._audio:
                 chunk = self._audio[0]
                 n = min(len(chunk), count - filled)
-                out[filled:filled + n] = chunk[:n]
+                out[filled:filled + n] = chunk[:n] * self.volume
                 if n == len(chunk):
                     self._audio.popleft()
                 else:

@@ -8,6 +8,9 @@ direction in the video's layout:
            bottom row down, back, up, turned on their side. Found by fitting a real YouTube frame.
   screen   a flat picture on a big screen in front of you (videos made for phone VR viewers)
 3D videos hold one picture per eye, stacked (top = left eye) or side by side (left = left eye).
+
+Viewer adjustments: size (the whole video bigger / smaller around you), 3D depth (each eye's picture turned a
+little apart: + = everything farther away, more relaxed), brightness, swapped eyes.
 """
 import ctypes
 
@@ -34,6 +37,10 @@ uniform vec2 screen_half; // screen: half its width and height at distance 1
 uniform int stereo;       // 0 mono, 1 top / bottom, 2 side by side
 uniform int eye;          // 0 left, 1 right
 uniform float opacity;
+uniform float size;       // 180° / 360°: 1 = as filmed, 2 = twice as big
+uniform float depth;      // radians the two eyes' pictures turn apart (+ = farther)
+uniform float brightness;
+uniform int swap;         // 1: the video's left picture goes to the right eye
 out vec4 color;
 const float PI = 3.14159265;
 
@@ -56,11 +63,20 @@ vec2 cube(vec3 d) {
     return (slot + (st + 1.0) * 0.5) / vec2(3.0, 2.0);
 }
 
+const vec4 BLACK = vec4(0.0, 0.0, 0.0, 1.0);
+
 void main() {
     vec3 n = normalize(v_dir);
     vec3 d = vec3(n.x, n.y, -n.z);        // x right, y up, z = straight ahead
+    float turn = (eye == 0 ? 0.5 : -0.5) * depth;
+    d = vec3(d.x * cos(turn) + d.z * sin(turn), d.y, -d.x * sin(turn) + d.z * cos(turn));
     vec2 uv;
     float lon = atan(d.x, d.z), lat = asin(clamp(d.y, -1.0, 1.0));
+    if (projection != 3) {                // size: angles shrink as the video grows
+        lon /= size; lat /= size;
+        if (abs(lon) > PI || abs(lat) > PI * 0.5) { color = BLACK * opacity; return; }
+        d = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
+    }
     if (projection == 3) {
         vec2 p = d.xy / max(d.z, 1e-4) / screen_half;
         if (d.z <= 0.0 || abs(p.x) > 1.0 || abs(p.y) > 1.0) { color = vec4(0.0, 0.0, 0.0, opacity); return; }
@@ -73,14 +89,15 @@ void main() {
     } else {
         uv = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
     }
-    if (stereo == 1) uv.y = uv.y * 0.5 + 0.5 * float(eye);
-    else if (stereo == 2) uv.x = uv.x * 0.5 + 0.5 * float(eye);
+    float picture = float(swap == 1 ? 1 - eye : eye);
+    if (stereo == 1) uv.y = uv.y * 0.5 + 0.5 * picture;
+    else if (stereo == 2) uv.x = uv.x * 0.5 + 0.5 * picture;
     // BT.709, video range
     float y = (texture(tex_y, uv).r - 16.0 / 255.0) * (255.0 / 219.0);
     float cb = (texture(tex_u, uv).r - 0.5) * (255.0 / 224.0);
     float cr = (texture(tex_v, uv).r - 0.5) * (255.0 / 224.0);
     vec3 rgb = vec3(y + 1.5748 * cr, y - 0.1873 * cb - 0.4681 * cr, y + 1.8556 * cb);
-    color = vec4(clamp(rgb, 0.0, 1.0), opacity);
+    color = vec4(clamp(rgb * brightness, 0.0, 1.0), opacity);
 }
 """
 PROJECTIONS = {"equi": 0, "equi180": 1, "mesh": 2, "screen": 3}
@@ -153,8 +170,8 @@ class VideoTexture:
 
 
 class VideoSphere:
-    """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture,
-    data = {"projection", "stereo", "screen_degrees"})."""
+    """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, data = {"projection",
+    "stereo", "screen_degrees", "size", "depth" (degrees), "brightness", "swap_eyes"})."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -170,7 +187,12 @@ class VideoSphere:
         prog.mat4("mvp", view_proj @ surface.model)
         prog.int("projection", PROJECTIONS.get(surface.data.get("projection"), 0))
         prog.int("stereo", STEREO.get(surface.data.get("stereo"), 0))
+        data = surface.data
         prog.int("eye", eye)
+        prog.int("swap", 1 if data.get("swap_eyes") else 0)
+        prog.float("size", data.get("size", 1.0))
+        prog.float("depth", float(np.radians(data.get("depth", 0.0))))
+        prog.float("brightness", data.get("brightness", 1.0))
         w, h = surface.texture.size
         stereo = surface.data.get("stereo")
         eye_aspect = (h / (w / 2)) if stereo == "side_by_side" else (h / 2 / w) if stereo == "top_bottom" else h / w

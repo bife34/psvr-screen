@@ -138,8 +138,9 @@ class Label(Widget):
 
 
 class Button(Widget):
-    """Icon and/or text. style: "normal", "flat" (no background until hovered), "danger" (red on hover).
-    `selected` shows it as switched on / current."""
+    """Icon and/or text. style: "normal", "flat" (no background until hovered), "danger" (red on hover),
+    "primary" (round, accent colored: the main action, like play). `selected` shows it as switched on /
+    current."""
     interactive = True
 
     def __init__(self, key, text=None, icon=None, on_click=None, w=None, h=theme.ROW, style="normal",
@@ -151,6 +152,8 @@ class Button(Widget):
         super().__init__(w, h, key, flex)
 
     def background(self, ctx):
+        if self.style == "primary":
+            return theme.ACCENT_LIGHT if ctx.hovered(self.key) else theme.ACCENT
         if ctx.hovered(self.key):
             return theme.DANGER if self.style == "danger" else theme.HOVER
         if self.selected:
@@ -161,7 +164,8 @@ class Button(Widget):
         x0, y0, x1, y1 = self.box
         bg = self.background(ctx)
         if bg:
-            d.rounded_rectangle(self.box, theme.RADIUS, fill=bg)
+            radius = min(x1 - x0, y1 - y0) / 2 if self.style == "primary" else theme.RADIUS
+            d.rounded_rectangle(self.box, radius, fill=bg)
         color = theme.MUTED if self.muted else (theme.ACCENT_LIGHT if self.selected and not self.text else theme.FG)
         h = y1 - y0
         cy = (y0 + y1) / 2

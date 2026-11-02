@@ -5,19 +5,21 @@ YouTube whether that video is a VR video. If it is, a "Watch in VR" button appea
 or above the dock (a browser on the main screen).
 
 ImmersiveVideo is the video mode: the video plays on a sphere around you (render/video_sphere.py) instead
-of the room and the windows; its controls float below in front of the video while the pointer is in VR.
+of the room and the windows; its controls float below in front of the video while the pointer is in VR, and
+their ⚙ opens the video settings (view, 3D, size, 3D depth, brightness, volume - all sliders).
 The browser's own playback is paused when it starts.
 """
+import dataclasses
 import threading
 
 from ..core import geometry
-from ..core.settings import clamp
+from ..core.settings import LIMITS, Settings, clamp
 from ..render.video_sphere import VideoTexture
 from ..scene.surface import INTERFACE, Surface
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Label, Row, SeekBar
+from ..ui.widgets import Button, Column, Label, Row, SeekBar, Slider, Spacer, Toggle
 from ..video import youtube
 from ..video.player import VideoPlayer
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT
@@ -26,12 +28,13 @@ BROWSERS = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe",
 CHECK_SECONDS = 2.0
 CONTROLS_SECONDS = 4.0             # controls stay this long after the pointer last moved
 CONTROLS_WIDTH = 1500
+SIDE_WIDTH = 520                   # controls: title on the left, settings / exit on the right
+PANEL_WIDTH = 1120                 # video settings
+PANEL_GAP = 0.02                   # m between the controls and the settings above them
 SKIP_SECONDS = 10
-SCREEN_STEP_DEGREES = 10           # "screen" videos: - / + makes the screen this much smaller / bigger
 PROJECTION_NAMES = {"equi": "360°", "equi180": "180°", "mesh": "360°", "screen": "Screen"}
-PROJECTION_NEXT = {"screen": "equi180", "equi180": "equi", "equi": "screen"}
 STEREO_NAMES = {"mono": "2D", "top_bottom": "3D ↕", "side_by_side": "3D ↔"}
-STEREO_NEXT = {"mono": "top_bottom", "top_bottom": "side_by_side", "side_by_side": "mono"}
+VIDEO_DEFAULTS = {f.name: f.default for f in dataclasses.fields(Settings) if f.name.startswith("video_")}
 
 
 def is_browser_video(exe, title):
@@ -103,14 +106,18 @@ class ImmersiveVideo:
         self.projection, self.stereo = info.projection, info.stereo
         self.front_yaw = shell.look_yaw          # the video's front is where you looked when it started
         self.player = VideoPlayer(info.video_url, info.audio_url, info.duration)
+        self.player.volume = shell.settings().video_volume
         self.texture = VideoTexture()
         self.controls = Controls(self)
+        self.panel = VideoSettings(self)
+        self.settings_open = False
         self._pointer_seen = (None, 0.0)         # last pointer direction and when it changed
 
     def close(self):
         self.player.close()
         self.texture.delete()
         self.controls.release()
+        self.panel.release()
 
     def recentered(self):
         self.front_yaw = 0.0
@@ -130,33 +137,51 @@ class ImmersiveVideo:
         if self.info.duration:
             self.player.seek(fraction * self.info.duration)
 
-    def switch_projection(self):
+    def set_projection(self, projection):
         if self.projection != "mesh":     # the cube layout is only ever 360°
-            self.projection = PROJECTION_NEXT[self.projection]
+            self.projection = projection
 
-    def switch_stereo(self):
-        self.stereo = STEREO_NEXT[self.stereo]
+    def set_stereo(self, stereo):
+        self.stereo = stereo
 
-    def resize_screen(self, step):
-        store = self.shell.store
-        store.update(video_screen_degrees=clamp("video_screen_degrees",
-                                                store.get().video_screen_degrees + step * SCREEN_STEP_DEGREES))
+    def toggle_settings(self):
+        self.settings_open = not self.settings_open
+
+    def set_value(self, key, value):
+        """A video setting (saved: the next video starts with it too)."""
+        self.shell.store.update(**{key: clamp(key, value) if key in LIMITS else value})
+        if key == "video_volume":
+            self.player.volume = value
+
+    def reset_settings(self):
+        self.shell.store.update(**VIDEO_DEFAULTS)
+        self.player.volume = VIDEO_DEFAULTS["video_volume"]
 
     # -- every frame ---------------------------------------------------------------------------------
     def surfaces(self, now):
         frame = self.player.frame()
         if frame is not None:
             self.texture.upload(frame)
+        s = self.shell.settings()
         front = geometry.rotate_y(-self.front_yaw)
         out = [Surface("video", front, 1, 1, texture=self.texture, shape="sphere",
                        data={"projection": self.projection, "stereo": self.stereo,
-                             "screen_degrees": self.shell.settings().video_screen_degrees})]
+                             "screen_degrees": s.video_screen_degrees, "size": s.video_size,
+                             "depth": s.video_depth, "brightness": s.video_brightness,
+                             "swap_eyes": s.video_swap_eyes})]
         if self._controls_visible(now):
             self.controls.refresh()
             model = front @ geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
             out.append(Surface("video-controls", model, self.controls.width, self.controls.height,
                                texture=self.controls.texture, layer=INTERFACE, target=self.controls,
                                data={"ui": True}))
+            if self.settings_open:   # just above the controls, over their right side (where ⚙ is)
+                self.panel.refresh()
+                x = self.controls.width / 2 - self.panel.width / 2
+                y = self.controls.height / 2 + PANEL_GAP + self.panel.height / 2
+                out.append(Surface("video-settings", model @ geometry.translate(x, y, 0.01), self.panel.width,
+                                   self.panel.height, texture=self.panel.texture, layer=INTERFACE,
+                                   target=self.panel, data={"ui": True}))
         return out
 
     def _controls_visible(self, now):
@@ -166,8 +191,8 @@ class ImmersiveVideo:
         direction = (round(pointer.yaw, 3), round(pointer.pitch, 3))
         if direction != self._pointer_seen[0]:
             self._pointer_seen = (direction, now)
-        on_controls = pointer.hit is not None and pointer.hit[0].id == "video-controls"
-        return (self.player.paused or self.player.ended or on_controls
+        on_ui = pointer.hit is not None and pointer.hit[0].id in ("video-controls", "video-settings")
+        return (self.player.paused or self.player.ended or self.settings_open or on_ui
                 or now - self._pointer_seen[1] < CONTROLS_SECONDS)
 
 
@@ -178,8 +203,8 @@ def _time(seconds):
 
 
 class Controls(View):
-    """Title / status, then: play-pause, -10 s, +10 s, time, seek bar, screen size (- / +, screen videos),
-    360°/180°/Screen, 2D/3D, recenter, exit."""
+    """  0:41 ━━━━━━━━━━━●──────────────── 7:52
+         Title · status          ⟲10  (▶)  10⟳          ⚙  ⟳  ✕ Exit   """
 
     def __init__(self, video):
         super().__init__(distance=DOCK_DISTANCE)
@@ -187,43 +212,96 @@ class Controls(View):
 
     def state(self):
         v, p = self.video, self.video.player
-        return (int(p.position), p.paused, p.ended, p.buffering, p.error, v.projection, v.stereo,
-                v.shell.settings().video_screen_degrees, self.ctx.drag_start)
+        return (int(p.position), p.paused, p.ended, p.buffering, p.error, v.settings_open, self.ctx.drag_start)
 
     def build(self):
         v, p = self.video, self.video.player
-        h = theme.BAR - 12
         duration = v.info.duration
+        position = p.position
+        h = theme.BAR - 8
         if p.error:
             status, color = "Can't play: " + p.error, theme.DANGER
         elif p.buffering:
-            status, color = "Loading...", theme.MUTED
+            status, color = "Loading...", theme.ACCENT_LIGHT
         else:
-            status, color = "", theme.MUTED
+            status, color = PROJECTION_NAMES[v.projection] + ("  ·  3D" if v.stereo != "mono" else ""), theme.MUTED
         playing = not p.paused and not p.ended
-        position = p.position
-        time_text = _time(position) + (" / " + _time(duration) if duration else "")
-        title = Row([Label(v.info.title, size=theme.SMALL, h=theme.ROW, flex=1, indent=24),
-                     Label(status, size=theme.SMALL, color=color, h=theme.ROW),
-                     Label(time_text, size=theme.SMALL, color=theme.MUTED, h=theme.ROW)],
-                    w=CONTROLS_WIDTH, h=theme.ROW, gap=24)
 
-        def button(key, text=None, icon=None, action=None, style="flat"):
-            return Button(key, text, icon, h=h, style=style, size=theme.TEXT - 4, on_click=action)
+        def button(key, text=None, icon=None, action=None, style="flat", selected=False, w=None):
+            return Button(key, text, icon, h=h, w=w, style=style, selected=selected, size=theme.TEXT - 4,
+                          on_click=action)
 
-        size = []
+        progress = Row([Label(_time(position), size=theme.SMALL, color=theme.FG, w=150, h=theme.ROW, align="right"),
+                        SeekBar("seek", position / duration if duration else 0.0, v.seek_fraction, h=theme.ROW,
+                                flex=1),
+                        Label(_time(duration) if duration else "live", size=theme.SMALL, color=theme.MUTED, w=150,
+                              h=theme.ROW)],
+                       w=CONTROLS_WIDTH, h=theme.ROW, gap=8)
+        about = Column([Label(v.info.title, size=theme.SMALL, h=int(theme.ROW * 0.8), w=SIDE_WIDTH, indent=16),
+                        Label(status, size=theme.SMALL - 4, color=color, h=int(theme.ROW * 0.7), w=SIDE_WIDTH,
+                              indent=16)], w=SIDE_WIDTH, h=h)
+        center = Row([button("back", f"−{SKIP_SECONDS}s", action=lambda: v.skip(-SKIP_SECONDS), w=150),
+                      Button("play", icon=Icon.PAUSE if playing else Icon.PLAY, w=h + 14, h=h + 14,
+                            style="primary", size=theme.TEXT, on_click=v.play_pause),
+                      button("forward", f"+{SKIP_SECONDS}s", action=lambda: v.skip(SKIP_SECONDS), w=150)],
+                     gap=18, h=h + 14)
+        right = Row([Spacer(flex=1),
+                     button("settings", icon=Icon.SETTINGS, action=v.toggle_settings, selected=v.settings_open,
+                            w=h + 10),
+                     button("recenter", icon=Icon.RECENTER, action=v.shell.recenter, w=h + 10),
+                     button("exit", "Exit", Icon.CLOSE, action=v.shell.stop_video, style="danger")],
+                    w=SIDE_WIDTH, h=h, gap=6)
+        buttons = Row([about, Spacer(flex=1), center, Spacer(flex=1), right], w=CONTROLS_WIDTH, h=h + 14)
+        return Column([progress, buttons], pad=18, gap=6, bg=theme.BG, radius=28)
+
+
+class VideoSettings(View):
+    """⚙ of the video controls: how the video is shown. Everything except View and 3D is remembered."""
+
+    def __init__(self, video):
+        super().__init__(distance=DOCK_DISTANCE)
+        self.video = video
+
+    def state(self):
+        v, s = self.video, self.video.shell.settings()
+        return (v.projection, v.stereo) + tuple(getattr(s, k) for k in VIDEO_DEFAULTS)
+
+    def build(self):
+        v, s = self.video, self.video.shell.settings()
+        w = PANEL_WIDTH
+
+        def choices(label, options, current, pick, disabled=()):
+            buttons = [Button(f"{label}:{value}", name, h=theme.ROW - 8, flex=1, size=theme.TEXT - 6,
+                              selected=value == current, muted=value in disabled,
+                              on_click=(lambda value=value: pick(value)) if value not in disabled else None)
+                       for value, name in options]
+            return Row([Label(label, w=int(w * 0.2), indent=24), Row(buttons, gap=6, flex=1, h=theme.ROW - 8)],
+                       w=w, h=theme.ROW, gap=8)
+
+        def slider(key, label, fmt, scale=1.0):
+            lo, hi = LIMITS[key]
+            return Slider(key, label, getattr(s, key) * scale, lo * scale, hi * scale, fmt, w=w,
+                          on_change=lambda value: v.set_value(key, value / scale))
+
+        sphere_only = ("screen",) if v.projection == "mesh" else ()
+        views = [("screen", "Screen"), ("equi180", "180°"), ("equi", "360°")]
+        current_view = "equi" if v.projection == "mesh" else v.projection
+        rows = [Row([Label("Video settings", size=theme.TITLE, color=theme.ACCENT, flex=1, indent=24),
+                     Button("reset", "Reset", h=theme.ROW - 8, style="flat", size=theme.TEXT - 6,
+                            on_click=v.reset_settings)], w=w, h=int(theme.ROW * 1.2)),
+                choices("View", views, current_view, v.set_projection,
+                        disabled=sphere_only + (("equi180",) if v.projection == "mesh" else ())),
+                choices("3D", [("mono", "Off"), ("side_by_side", "Side by side"), ("top_bottom", "Top / bottom")],
+                        v.stereo, v.set_stereo)]
         if v.projection == "screen":
-            size = [button("smaller", "−", action=lambda: v.resize_screen(-1)),
-                    Label(f"{v.shell.settings().video_screen_degrees:.0f}°", size=theme.SMALL, color=theme.MUTED, h=h),
-                    button("bigger", "+", action=lambda: v.resize_screen(1))]
-        row = Row([button("play", icon=Icon.PAUSE if playing else Icon.PLAY, action=v.play_pause),
-                   button("back", f"−{SKIP_SECONDS}s", action=lambda: v.skip(-SKIP_SECONDS)),
-                   button("forward", f"+{SKIP_SECONDS}s", action=lambda: v.skip(SKIP_SECONDS)),
-                   SeekBar("seek", position / duration if duration else 0.0, v.seek_fraction, h=h, flex=1),
-                   *size,
-                   button("projection", PROJECTION_NAMES[v.projection], action=v.switch_projection),
-                   button("stereo", STEREO_NAMES[v.stereo], action=v.switch_stereo),
-                   button("recenter", icon=Icon.RECENTER, action=v.shell.recenter),
-                   button("exit", "Exit", Icon.CLOSE, action=v.shell.stop_video, style="danger")],
-                  w=CONTROLS_WIDTH, h=theme.BAR, gap=6)
-        return Column([title, row], pad=8, bg=theme.BG, radius=theme.RADIUS)
+            rows.append(slider("video_screen_degrees", "Screen size", "{:.0f}°"))
+        else:
+            rows.append(slider("video_size", "Size", "{:.2f}x"))
+        rows += [slider("video_depth", "3D depth", "{:+.1f}°"),
+                 Label("3D depth:  −  closer        +  farther, more relaxed", size=theme.SMALL - 6,
+                       color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24),
+                 Toggle("video_swap_eyes", "Swap eyes", s.video_swap_eyes, w=w,
+                        on_change=lambda value: v.set_value("video_swap_eyes", value)),
+                 slider("video_brightness", "Brightness", "{:.0f}%", 100),
+                 slider("video_volume", "Volume", "{:.0f}%", 100)]
+        return Column(rows, pad=14, bg=theme.BG, radius=28)
