@@ -168,7 +168,8 @@ class ImmersiveVideo:
         out = [Surface("video", front, 1, 1, texture=self.texture, shape="sphere",   # centered between your eyes
                        data={"projection": self.projection, "stereo": self.stereo, "distance": s.video_distance,
                              "screen_degrees": s.video_screen_degrees, "screen_curve": s.video_screen_curve,
-                             "size": s.video_size, "brightness": s.video_brightness})]
+                             "size": s.video_size, "brightness": s.video_brightness,
+                             "move_away": s.video_move_away})]
         if self._controls_visible(now):
             self.controls.refresh()
             model = front @ geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
@@ -306,8 +307,19 @@ class VideoSettings(View):
                      slider("video_screen_curve", "Curve", "{:.0f}%", 100)]
         else:
             rows.append(slider("video_size", "Size", "{:.2f}x"))
-        rows += [distance_slider(),
-                 Label("Distance:  drag, or the mouse wheel for small steps", size=theme.SMALL - 6,
+        def move_away_slider():
+            """Logarithmic too (from 0): fine steps close by, big ones far away."""
+            hi = math.log1p(LIMITS["video_move_away"][1])
+            return Slider("video_move_away", "Move away", math.log1p(s.video_move_away), 0.0, hi, w=w,
+                          text=lambda value: f"{math.expm1(value):.2f} m" if value < math.log1p(10)
+                          else f"{math.expm1(value):.0f} m",
+                          on_change=lambda value: v.set_value("video_move_away", math.expm1(value)))
+
+        rows += [move_away_slider(),
+                 Label("Move away: the screens around you go farther back - and look smaller", size=theme.SMALL - 6,
+                       color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24),
+                 distance_slider(),
+                 Label("Distance: deeper or nearer for your eyes, same size", size=theme.SMALL - 6,
                        color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24)]
         rows += [slider("video_brightness", "Brightness", "{:.0f}%", 100),
                  slider("video_volume", "Volume", "{:.0f}%", 100)]

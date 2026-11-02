@@ -14,7 +14,10 @@ direction in the video's layout:
            bent like a window (curve 1 = around you: every point as far away)
 3D videos hold one picture per eye, stacked (top = left eye) or side by side (left = left eye).
 
-Viewer adjustments: size (the whole video bigger / smaller around you) and brightness.
+Viewer adjustments: size (the whole video bigger / smaller around you), brightness, and "move away": the
+video goes away from you like a real object and gets smaller. You stay in the middle: a 180° / 360° dome
+grows around you in every direction (like a cinema whose screens all move back) while its picture keeps
+its real size on it; a screen moves straight back.
 """
 import ctypes
 
@@ -184,7 +187,7 @@ class VideoTexture:
 class VideoSphere:
     """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = where the
     video's front is, data = {"projection", "stereo", "distance", "screen_degrees", "screen_curve", "size",
-    "brightness"}). Screen videos are drawn on a panel instead of the sphere."""
+    "brightness", "move_away"}). Screen videos are drawn on a panel instead of the sphere."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -203,19 +206,21 @@ class VideoSphere:
         prog.int("stereo", STEREO.get(surface.data.get("stereo"), 0))
         data = surface.data
         prog.int("eye", eye)
-        prog.float("size", data.get("size", 1.0))
         prog.float("brightness", data.get("brightness", 1.0))
         w, h = surface.texture.size
         stereo = surface.data.get("stereo")
         eye_aspect = (h / (w / 2)) if stereo == "side_by_side" else (h / 2 / w) if stereo == "top_bottom" else h / w
         distance = data.get("distance", 10.0)
+        away = data.get("move_away", 0.0)
         if projection == "screen":
             width, curvature = _screen_shape(distance, data.get("screen_degrees", 60.0), data.get("screen_curve", 0.0))
             flat_width = 2 * distance * np.tan(np.radians(data.get("screen_degrees", 60.0) / 2))
             mesh = self._panel_mesh(width, flat_width * eye_aspect, curvature)
-            model = surface.model @ geometry.translate(0, 0, -distance)
-        else:
-            mesh, model = self._mesh, surface.model @ geometry.scale(distance)
+            model = surface.model @ geometry.translate(0, 0, -distance - away)
+            prog.float("size", 1.0)
+        else:   # the dome grows; the picture keeps its real size on it, so it covers less of your view
+            mesh, model = self._mesh, surface.model @ geometry.scale(distance + away)
+            prog.float("size", data.get("size", 1.0) * distance / (distance + away))
         prog.mat4("mvp", view_proj @ model.astype(np.float32))
         prog.float("opacity", surface.opacity)
         surface.texture.bind()
