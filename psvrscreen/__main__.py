@@ -18,6 +18,7 @@ def main():
     engine = DirectEngine(store) if store.get().engine == "direct" else VREngine(store)
     pad = GamepadMouse(store, engine)
     motion = DS4Motion(store, engine)
+    pad.motion = motion                   # the control panel shows its status
     engine.start()
     pad.start()
     motion.start()

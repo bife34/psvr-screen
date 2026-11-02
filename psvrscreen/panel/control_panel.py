@@ -601,7 +601,9 @@ class ControlPanel:
             pointer_state = ("   |   Mouse: could not take over the mouse (hook refused)" if pointer.hook_ok is False
                              else "   |   Mouse: IN VR  (Ctrl+Alt+P = back to main screen)" if pointer.active
                              else "   |   Mouse: main screen  (Ctrl+Alt+P = into VR)")
-        self.status.config(text=f"VR: {self.engine.status}{fps}{pointer_state}\nController: {self.pad.status}")
+        motion = getattr(self.pad, "motion", None)
+        motion = f"   |   {motion.status}" if motion is not None else ""
+        self.status.config(text=f"VR: {self.engine.status}{fps}{pointer_state}\nController: {self.pad.status}{motion}")
         self.root.after(33, self._tick)
 
     def run(self):

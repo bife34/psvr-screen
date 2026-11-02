@@ -1,8 +1,9 @@
 """DS4 motion: aim the VR pointer by turning the controller (a laser from your hand).
 
 The DS4's gyro is read straight from the controller (HID, next to DS4Windows, which keeps doing the buttons
-through XInput - see gamepad.py). Turning the controller turns the pointer like a mouse does: relative, so it
-never drifts away; click the touchpad to put the pointer where you look.
+through XInput - see gamepad.py). Click the touchpad: the laser comes on (the pointer goes into VR) where you
+look; click it again later to bring the pointer back to where you look. Turning the controller turns the
+pointer like a mouse does: relative, so it never drifts away.
 
 Measured on the user's DS4 v2: gyro is right-handed in the same frame as the accelerometer, 16 units per
 degree/second. Left / right = turning around "up" (whatever way you hold it: gravity says where up is);
@@ -39,7 +40,7 @@ class DS4Motion(threading.Thread):
     def __init__(self, store, engine):
         super().__init__(daemon=True, name="ds4-motion")
         self.store, self.engine = store, engine
-        self.status = "DS4 motion: no controller"
+        self.status = "DS4 laser: no DS4 found (press its PS button)"
         self._stop_event = threading.Event()
         self._bias = None
         self._up = np.array([0.0, 1.0, 0.0])
@@ -52,19 +53,19 @@ class DS4Motion(threading.Thread):
             try:
                 path = _find()
                 if path is None:
-                    self.status = "DS4 motion: no controller"
+                    self.status = "DS4 laser: no DS4 found (press its PS button)"
                 else:
                     self._read(path)
             except Exception:
                 log_error("ds4 motion")
-                self.status = "DS4 motion: lost the controller"
+                self.status = "DS4 laser: lost the controller"
             self._stop_event.wait(RETRY_SECONDS)
 
     def _read(self, path):
         import hid
         device = hid.device()
         device.open_path(path)
-        self.status = "DS4 motion: ready"
+        self.status = "DS4 laser: ready - click the touchpad to aim"
         try:
             last, pending, sent, clicked = time.perf_counter(), [0.0, 0.0], time.perf_counter(), False
             while not self._stop_event.is_set():
@@ -117,6 +118,12 @@ class DS4Motion(threading.Thread):
         pointer.turn(yaw * s.gyro_speed, pitch * s.gyro_speed)
 
     def _to_look(self):
+        """Touchpad click: the pointer goes into VR if it isn't (the engine puts it where you look), else it
+        jumps to where you look."""
         pointer = getattr(self.engine, "pointer", None)
-        if pointer is not None and pointer.active and self.store.get().gyro_pointer:
-            pointer.to_look()
+        if pointer is None or not self.store.get().gyro_pointer:
+            return
+        if not pointer.enabled:
+            pointer.enabled = True
+        pointer.to_look()
+        pointer.laser_seen = time.monotonic()    # show the laser right away
