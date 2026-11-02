@@ -10,7 +10,8 @@ direction in the video's layout:
 3D videos hold one picture per eye, stacked (top = left eye) or side by side (left = left eye).
 
 Viewer adjustments: size (the whole video bigger / smaller around you), 3D depth (each eye's picture turned a
-little apart: + = everything farther away, more relaxed), brightness, swapped eyes.
+little apart: + = everything farther away, more relaxed, - = closer; a screen at distance D is a turn of
+-(eye distance / D)), brightness.
 """
 import ctypes
 
@@ -40,7 +41,6 @@ uniform float opacity;
 uniform float size;       // 180° / 360°: 1 = as filmed, 2 = twice as big
 uniform float depth;      // radians the two eyes' pictures turn apart (+ = farther)
 uniform float brightness;
-uniform int swap;         // 1: the video's left picture goes to the right eye
 out vec4 color;
 const float PI = 3.14159265;
 
@@ -89,9 +89,8 @@ void main() {
     } else {
         uv = vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
     }
-    float picture = float(swap == 1 ? 1 - eye : eye);
-    if (stereo == 1) uv.y = uv.y * 0.5 + 0.5 * picture;
-    else if (stereo == 2) uv.x = uv.x * 0.5 + 0.5 * picture;
+    if (stereo == 1) uv.y = uv.y * 0.5 + 0.5 * float(eye);
+    else if (stereo == 2) uv.x = uv.x * 0.5 + 0.5 * float(eye);
     // BT.709, video range
     float y = (texture(tex_y, uv).r - 16.0 / 255.0) * (255.0 / 219.0);
     float cb = (texture(tex_u, uv).r - 0.5) * (255.0 / 224.0);
@@ -171,7 +170,7 @@ class VideoTexture:
 
 class VideoSphere:
     """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, data = {"projection",
-    "stereo", "screen_degrees", "size", "depth" (degrees), "brightness", "swap_eyes"})."""
+    "stereo", "screen_degrees", "size", "depth" (degrees), "brightness"})."""
 
     def __init__(self):
         self._prog = Program(VS, FS)
@@ -189,7 +188,6 @@ class VideoSphere:
         prog.int("stereo", STEREO.get(surface.data.get("stereo"), 0))
         data = surface.data
         prog.int("eye", eye)
-        prog.int("swap", 1 if data.get("swap_eyes") else 0)
         prog.float("size", data.get("size", 1.0))
         prog.float("depth", float(np.radians(data.get("depth", 0.0))))
         prog.float("brightness", data.get("brightness", 1.0))

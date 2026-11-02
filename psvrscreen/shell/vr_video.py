@@ -6,10 +6,11 @@ or above the dock (a browser on the main screen).
 
 ImmersiveVideo is the video mode: the video plays on a sphere around you (render/video_sphere.py) instead
 of the room and the windows; its controls float below in front of the video while the pointer is in VR, and
-their ⚙ opens the video settings (view, 3D, size, 3D depth, brightness, volume - all sliders).
+their ⚙ opens the video settings (view, 3D, size, distance / 3D depth, brightness, volume - all sliders).
 The browser's own playback is paused when it starts.
 """
 import dataclasses
+import math
 import threading
 
 from ..core import geometry
@@ -19,7 +20,7 @@ from ..scene.surface import INTERFACE, Surface
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Label, Row, SeekBar, Slider, Spacer, Toggle
+from ..ui.widgets import Button, Column, Label, Row, SeekBar, Slider, Spacer
 from ..video import youtube
 from ..video.player import VideoPlayer
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT
@@ -164,11 +165,14 @@ class ImmersiveVideo:
             self.texture.upload(frame)
         s = self.shell.settings()
         front = geometry.rotate_y(-self.front_yaw)
+        if self.projection == "screen":   # the eyes turn in toward a screen that far away
+            depth = -math.degrees(s.ipd / s.video_screen_distance)
+        else:
+            depth = s.video_depth
         out = [Surface("video", front, 1, 1, texture=self.texture, shape="sphere",
                        data={"projection": self.projection, "stereo": self.stereo,
-                             "screen_degrees": s.video_screen_degrees, "size": s.video_size,
-                             "depth": s.video_depth, "brightness": s.video_brightness,
-                             "swap_eyes": s.video_swap_eyes})]
+                             "screen_degrees": s.video_screen_degrees, "size": s.video_size, "depth": depth,
+                             "brightness": s.video_brightness})]
         if self._controls_visible(now):
             self.controls.refresh()
             model = front @ geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
@@ -294,14 +298,13 @@ class VideoSettings(View):
                 choices("3D", [("mono", "Off"), ("side_by_side", "Side by side"), ("top_bottom", "Top / bottom")],
                         v.stereo, v.set_stereo)]
         if v.projection == "screen":
-            rows.append(slider("video_screen_degrees", "Screen size", "{:.0f}°"))
+            rows += [slider("video_screen_degrees", "Screen size", "{:.0f}°"),
+                     slider("video_screen_distance", "Distance", "{:.1f} m")]
         else:
-            rows.append(slider("video_size", "Size", "{:.2f}x"))
-        rows += [slider("video_depth", "3D depth", "{:+.1f}°"),
-                 Label("3D depth:  −  closer        +  farther, more relaxed", size=theme.SMALL - 6,
-                       color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24),
-                 Toggle("video_swap_eyes", "Swap eyes", s.video_swap_eyes, w=w,
-                        on_change=lambda value: v.set_value("video_swap_eyes", value)),
-                 slider("video_brightness", "Brightness", "{:.0f}%", 100),
+            rows += [slider("video_size", "Size", "{:.2f}x"),
+                     slider("video_depth", "3D depth", "{:+.1f}°"),
+                     Label("3D depth:  −  closer        +  farther, more relaxed", size=theme.SMALL - 6,
+                           color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24)]
+        rows += [slider("video_brightness", "Brightness", "{:.0f}%", 100),
                  slider("video_volume", "Volume", "{:.0f}%", 100)]
         return Column(rows, pad=14, bg=theme.BG, radius=28)
