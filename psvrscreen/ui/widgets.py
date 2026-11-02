@@ -296,7 +296,7 @@ class Handle(Widget):
 
     def draw(self, d, ctx):
         if self.hover_bg and (ctx.hovered(self.key) or ctx.pressed(self.key)):
-            d.rectangle(self.box, fill=self.hover_bg)
+            d.rounded_rectangle(self.box, (self.box[3] - self.box[1]) / 2, fill=self.hover_bg)
         super().draw(d, ctx)
 
     def press(self, ctx, e):

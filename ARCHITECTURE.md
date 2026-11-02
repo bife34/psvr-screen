@@ -66,7 +66,12 @@ goes back to the main screen until the next session.
 | Which YouTube videos are VR              | `video/youtube.py`            |
 | Other sites; window fallback             | `video/sites.py`, `shell/vr_video.py` (WindowPlayer) |
 | Video files on the PC                    | `video/files.py`              |
-| Videos app (library: drives, Recent)     | `apps/videos.py`              |
+| Videos app (library grid: Recent, drives) | `apps/videos.py` (Library)   |
+| Photos app (grid, viewer, 360° photos)   | `apps/photos.py`              |
+| Thumbnails (background, disk cache)      | `video/thumbs.py`             |
+| Home launcher                            | `shell/home.py`               |
+| Design: colors, fonts, icons, shapes     | `ui/theme.py` (dark glass, Windows 11 font + icons) |
+| Panels, pictures, tiles, cards, badges   | `ui/widgets.py`               |
 | Right-click menus                        | `shell/dialogs.py` (ContextMenu), `shell/shell.py` (*_menu) |
 | Private mode (hidden titles)             | `core/settings.py` (shown_title) |
 | Decoding, sound, sync, seeking           | `video/player.py`             |

@@ -26,7 +26,7 @@ from ..scene.surface import INTERFACE, Surface
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Label, Row, SeekBar, Slider, Spacer, Widget
+from ..ui.widgets import Button, Column, Label, Panel, Row, SeekBar, Slider, Spacer, Widget
 from ..video import recognize, sites
 from ..video.player import VideoPlayer
 from ..win.capture import WindowCapture
@@ -147,7 +147,7 @@ class WatchButton(View):
                            selected=True, on_click=lambda: self.shell.watch_video(self.hwnd)),
                     Button("dismiss", icon=Icon.CLOSE, w=int(h * 0.8), h=h, size=theme.SMALL - 6, style="danger",
                            on_click=lambda: self.shell.dismiss_video(self.hwnd))],
-                   pad=6, gap=6, bg=theme.BG, radius=theme.RADIUS)
+                   pad=8, gap=6, bg=theme.BG, radius=theme.RADIUS_PANEL, border=theme.EDGE)
 
 
 class WindowPlayer:
@@ -486,7 +486,7 @@ class Controls(View):
                      button("exit", "Exit", Icon.CLOSE, action=v.shell.stop_video, style="danger")],
                     w=SIDE_WIDTH, h=h, gap=6)
         buttons = Row([about, Spacer(flex=1), center, Spacer(flex=1), right], w=CONTROLS_WIDTH, h=h + 14)
-        return Column([progress, buttons], pad=18, gap=6, bg=theme.BG, radius=28)
+        return Panel([progress, buttons], pad=20, gap=6)
 
 
 class VideoSettings(View):
@@ -559,14 +559,14 @@ class VideoSettings(View):
                          hint("Eye height: if this video's 3D looks double up / down, line its eyes up here")]
             else:
                 rows.append(hint("Eye separation is for 3D videos (3D above)"))
-            return Column(rows, pad=14, bg=theme.BG, radius=28)
+            return Panel(rows, pad=20, gap=4)
 
         if self.tab == "picture":
             rows += [slider("video_brightness", "Brightness", "{:.0f}%", 100),
                      slider("video_contrast", "Contrast", "{:.0f}%", 100),
                      slider("video_saturation", "Colors", "{:.0f}%", 100),
                      slider("video_volume", "Volume", "{:.0f}%", 100)]
-            return Column(rows, pad=14, bg=theme.BG, radius=28)
+            return Panel(rows, pad=20, gap=4)
 
         def move_away_slider():
             """Logarithmic too (from 0): fine steps close by, big ones far away."""
@@ -596,7 +596,7 @@ class VideoSettings(View):
         rows += [slider("video_tilt", "Tilt (up / down)", "{:+.0f}°"),
                  slider("video_roll", "Roll", "{:+.0f}°"),
                  hint("Roll fixes a crooked horizon  ·  or grab empty space and drag the video")]
-        return Column(rows, pad=14, bg=theme.BG, radius=28)
+        return Panel(rows, pad=20, gap=4)
 
 
 class DomeMap(Widget):

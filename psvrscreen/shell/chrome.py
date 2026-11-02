@@ -4,7 +4,7 @@ from ..core.settings import LIMITS, locked, shown_title
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Handle, Label, Row, Slider
+from ..ui.widgets import Button, Handle, Label, Panel, Row, Slider
 
 BAR_IMAGE_WIDTH = 2300   # the bar is drawn this wide and scaled to its window's width
 CARD_WIDTH = 940
@@ -43,7 +43,7 @@ class TitleBar(View):
         pos_locked, look_locked = p.get("lock_position", False), p.get("lock_look", False)
 
         def button(action, icon, on=False, style="flat"):
-            return Button(action, icon=icon, w=h + 10, h=h, style=style, selected=on,
+            return Button(action, icon=icon, w=h, h=h - 20, style=style, selected=on,
                           on_click=lambda: s.window_action(wid, action))
 
         title = Row([Label(Icon.GRIP, size=theme.SMALL, color=theme.MUTED, w=h, h=h, align="center", icon=True),
@@ -60,7 +60,7 @@ class TitleBar(View):
                     button("settings", Icon.SETTINGS, wid in s.settings_open),
                     button("minimize", Icon.MINIMIZE),
                     button("close", Icon.CLOSE, style="danger")],
-                   w=BAR_IMAGE_WIDTH, h=h, bg=theme.BG, align="stretch")
+                   w=BAR_IMAGE_WIDTH, h=h, bg=theme.BG, radius=h / 2, border=theme.EDGE, pad=8, gap=4)
 
 
 class SettingsCard(View):
@@ -83,4 +83,4 @@ class SettingsCard(View):
             lo, hi = LIMITS[key]
             rows.append(Slider(key, label, p.get(key, 0), lo, hi, fmt, w=CARD_WIDTH, disabled=locked(p, key),
                                on_change=lambda v, k=key: s.set_window_value(wid, k, v)))
-        return Column(rows, pad=12, bg=theme.BG, radius=theme.RADIUS, w=CARD_WIDTH + 24)
+        return Panel(rows, pad=20, gap=4, w=CARD_WIDTH + 40)
