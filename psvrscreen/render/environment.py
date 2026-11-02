@@ -12,11 +12,12 @@ from OpenGL import GL
 from PIL import Image
 
 from ..core import geometry
+from ..core.paths import APP_DIR
 from ..core.log import log_error
 from .gl import Mesh, Program
 from .video_sphere import _sphere
 
-FOLDER = Path(__file__).resolve().parents[2] / "environments"
+FOLDER = APP_DIR / "environments"
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 RADIUS = 400.0          # far enough that both eyes see it as "at the horizon"
 MAX_WIDTH = 8192

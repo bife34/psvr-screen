@@ -11,8 +11,9 @@ import threading
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 
-PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SETTINGS_PATH = os.path.join(PROJECT_DIR, "settings.json")
+from .paths import DATA_DIR
+
+SETTINGS_PATH = str(DATA_DIR / "settings.json")   # next to the app from source, your user folder when installed
 
 # Keyboard shortcuts (changeable on the Shortcuts tab): action -> (label, default keys)
 SHORTCUT_ACTIONS = {

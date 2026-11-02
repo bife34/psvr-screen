@@ -1,0 +1,37 @@
+PSVR Screen - your PC in the PS4 VR headset (PSVR), without SteamVR.
+
+YOU NEED
+  - A PSVR (the PS4 one) with its processor box, connected to the PC by HDMI and USB
+  - Windows 10 or 11, 64-bit
+  - A controller: a DS4 (by USB or Bluetooth) or any Xbox controller. A mouse works too.
+
+WHAT THIS INSTALLER CAN SET UP (you choose on the next pages)
+
+  1. PSVR Screen - the app.                                            NEEDED
+     Your windows around you in VR, videos, photos, games on a big screen,
+     360-degree surroundings.
+
+  2. Virtual Display Driver - extra invisible monitors.                 NEEDED
+     The "VR monitors" your windows move to while you see them in VR, and
+     the sharp 4K screen. Free (MIT license), included in this installer.
+
+  3. DS4Windows + ViGEmBus - the DS4 in non-Steam PC games.            OPTIONAL
+     Not needed in VR: PSVR Screen reads the DS4 itself (buttons, sticks
+     and its motion for the laser pointer). Steam games understand the DS4
+     on their own too. Only for other PC games that need an Xbox controller.
+     Free; downloaded from their official pages during the install.
+
+  4. Steam + SteamVR - for real VR games.                               OPTIONAL
+     PSVR Screen hands the headset to SteamVR for VR games and takes it back
+     when you press "Open in VR again". Free; Steam's official installer is
+     downloaded, then SteamVR is installed from Steam.
+
+  5. iVRy - makes the PSVR work in SteamVR.                            OPTIONAL
+     Needed only for VR games (with item 4). Paid add-on on Steam (there is
+     a free "Lite" demo): the installer only opens its Steam page.
+
+Nothing is installed without you ticking it. Items 2 and 3 need
+administrator rights (Windows will ask).
+
+PSVR Screen is free and open source (GNU GPL v3). The software it includes
+and installs is listed in THIRD_PARTY_NOTICES.md in its folder.

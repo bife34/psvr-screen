@@ -8,3 +8,6 @@ settings.json
 downloads/
 tools/*.log
 *.log
+build/
+dist/
+packaging/icon_preview.png

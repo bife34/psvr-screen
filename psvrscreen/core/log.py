@@ -3,8 +3,9 @@ import os
 import time
 import traceback
 
-ERROR_LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                         "psvr-screen.log")
+from .paths import DATA_DIR
+
+ERROR_LOG = str(DATA_DIR / "psvr-screen.log")
 
 
 def log_error(where=""):
