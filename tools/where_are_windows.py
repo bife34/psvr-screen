@@ -6,7 +6,7 @@ import sys
 from ctypes import wintypes
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from psvrscreen import displays, windows  # noqa: E402
+from psvrscreen.win import displays, windows  # noqa: E402
 
 ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
 vr = displays.find("vr")

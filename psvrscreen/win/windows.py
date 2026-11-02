@@ -194,6 +194,46 @@ class WindowMover:
         user32.SetWindowPos(hwnd, None, r.left, r.top, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE)
         user32.SetWindowPlacement(hwnd, ctypes.byref(placement))
 
-    def back_all(self):
+    def back_all(self, kinds=("vr",)):
+        """Every window we moved goes back; then any other window left on these invisible monitors (`kinds`) comes
+        to the main monitor too - windows that opened there by themselves (Windows opens a new window where the
+        app's last one was) were never ours to put back, but nobody can see them there."""
         for hwnd in list(self._original):
             self.back(hwnd)
+        rescue_windows(kinds)
+
+
+def _monitor_of(rect):
+    x = (rect.left + rect.right) // 2
+    return next((d for d in displays.list_displays() if d.left <= x < d.left + d.width), None)
+
+
+def windows_on(kinds):
+    """App windows (hwnd) whose middle is on one of these monitors ("vr", "view1"...)."""
+    found = []
+    for hwnd, _, _ in list_open_windows():
+        if user32.IsIconic(hwnd):
+            continue
+        r = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+        monitor = _monitor_of(r)
+        if monitor is not None and monitor.kind in kinds:
+            found.append(hwnd)
+    return found
+
+
+def rescue_windows(kinds=("vr",)):
+    """Bring app windows sitting on these (invisible) monitors to the main monitor, same size in points."""
+    main = displays.find("main")
+    if main is None:
+        return
+    for i, hwnd in enumerate(windows_on(kinds)):
+        w, h = normal_size_points(hwnd)
+        scale = (displays.get_scale(main) or 100) / 100
+        w, h = min(int(w * scale), main.width - 160), min(int(h * scale), main.height - 160)
+        x, y = main.left + 80 + i * 40, main.top + 80 + i * 40
+        if user32.IsZoomed(hwnd):
+            user32.ShowWindow(hwnd, SW_RESTORE)
+        # Move first, then size (the DPI trap, see WindowMover.to_vr_monitor).
+        user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE)
+        user32.SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)

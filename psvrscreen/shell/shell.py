@@ -169,7 +169,8 @@ class Shell:
         self.pointer.stop()
         self.media.stop()
         self.video_detector.stop()
-        self.host.mover.back_all()
+        # Quitting: nothing shows the invisible monitors any more, so no window may stay on any of them.
+        self.host.mover.back_all(("vr",) + tuple(displays.view_kinds()))
 
     # -- state -------------------------------------------------------------------------------------
     def settings(self):
@@ -679,10 +680,15 @@ class Shell:
         now = time.monotonic()
         launched = now - self._launched_at < LAUNCHED_FROM_VR_SECONDS
         clicked = s.auto_add_windows and self.pointer.active and now - self.last_click < OPENED_FROM_VR_SECONDS
-        if self._known_windows is not None and (launched or clicked):
+        if self._known_windows is not None:
+            # A new window that opened on the invisible VR monitor by itself (Windows opens it where the app's
+            # last window was) can only be seen in VR: it always comes in.
+            new = [hwnd for hwnd in current if hwnd not in self._known_windows]
+            on_vr = set(windows.windows_on(("vr",))) if new else set()
             in_vr = {getattr(w.content, "hwnd", None) for w in self.windows.values()}
-            for hwnd, (title, exe) in current.items():
-                if hwnd not in self._known_windows and hwnd not in in_vr:
+            for hwnd in new:
+                if hwnd not in in_vr and (launched or clicked or hwnd in on_vr):
+                    title, exe = current[hwnd]
                     workspace.add_window(self.store, new_panel_for(hwnd, title, exe), self.look_yaw)
         self._known_windows = set(current)
 

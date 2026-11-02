@@ -6,6 +6,7 @@ from .panel.control_panel import ControlPanel
 from .core.settings import SettingsStore
 from .engine import DirectEngine
 from .legacy.steamvr_overlay import VREngine
+from .win import displays, windows
 
 
 def main():
@@ -21,8 +22,10 @@ def main():
     finally:
         pad.stop()
         engine.stop()
-        engine.join(5)
+        engine.join(15)
         store.save()
+        # Last safety net (the VR side may not have finished in time): no window stays on an invisible monitor.
+        windows.rescue_windows(("vr",) + tuple(displays.view_kinds()))
 
 
 if __name__ == "__main__":
