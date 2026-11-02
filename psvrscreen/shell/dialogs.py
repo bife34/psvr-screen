@@ -30,6 +30,8 @@ SETTINGS_SECTIONS = [
         ("environments", "environment", None, None),
         ("slider", "environment_brightness", "Brightness", "{:.0%}"),
         ("slider", "environment_turn", "Turn the scene", "{:+.0f}°"),
+        ("note", None, "Or grab the scene: press on empty space and drag left or right - it turns with "
+                       "your pointer. The mouse wheel on a slider moves it in fine steps.", None),
     ]),
     ("controls", "Controls", Icon.MOUSE, [
         ("slider", "mouse_speed", "Mouse speed", "{:.1f}x"),

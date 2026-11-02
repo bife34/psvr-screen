@@ -145,6 +145,7 @@ class Shell:
         self.gesture = None                      # WindowMove / WindowBend in progress
         self.dialog = None                       # the open dialog view (one at a time)
         self.motion = Motion()                   # open / close animations
+        self.scene_grab = _SceneGrab(store)      # drag empty space: turn the surroundings
         self.menu = None                         # the open right-click menu, and where it is
         self._menu_model = None
         self.dock = Dock(self)
@@ -226,7 +227,9 @@ class Shell:
             info, self._opened_file = self._opened_file, None
             self.stop_video()
             self.video = ImmersiveVideo(self, info, None)
-        self.pointer.background = self.video.grab if self.video is not None else None
+        # Presses on empty space: grab the video (it follows the pointer), else the surroundings (turn them)
+        self.pointer.background = (self.video.grab if self.video is not None
+                                   else self.scene_grab if s.environment else None)
         if self.video is not None:
             return self.video.surfaces(now) + self._menu_surfaces()
         surfaces = []
@@ -789,6 +792,24 @@ def _laser(end):
     model = np.eye(4, dtype=np.float32)
     model[:3, 0], model[:3, 1], model[:3, 2], model[:3, 3] = x, y, z, middle
     return Surface("laser", model, LASER_WIDTH, length, color=LASER_COLOR, layer=OVERLAY)
+
+
+class _SceneGrab:
+    """Left button on empty space + drag left / right: the surroundings turn with the pointer, so what you
+    grabbed stays under it."""
+
+    def __init__(self, store):
+        self.store = store
+        self._start = None
+
+    def on_pointer(self, e):
+        if e.kind == "press" and e.button == "left":
+            self._start = self.store.get().environment_turn
+        elif e.kind == "drag" and self._start is not None:
+            turn = self._start - (e.yaw - e.start_yaw)
+            self.store.update(environment_turn=(turn + 180.0) % 360.0 - 180.0)
+        elif e.kind == "release":
+            self._start = None
 
 
 class _Lingering:
