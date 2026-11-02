@@ -11,14 +11,18 @@ Each layer only uses the layers below it. Hardware and Windows details never lea
  apps/        Things you use in VR: a Windows app window, a monitor, and native VR apps (Files, ...)
  shell/       The VR "operating system": windows, placement, dock, dialogs, pointer, input routing
  ui/          VR interface toolkit: widgets drawn for the headset's resolution (round, readable text)
- scene/       3D surfaces: a placed, maybe curved rectangle with a picture, and ray hits on it
+ scene/       3D surfaces (a placed, maybe curved rectangle with a picture) and pointer events
  render/      OpenGL: meshes, textures, the headset window, per-eye rendering and lens correction
  core/        Settings (saved to settings.json) and 3D math, used by everything
- device/      The hardware: PSVR USB/HID protocol, head tracking, the DS4 controller
- platform/    Windows services: monitors, app windows, capture, input injection, mouse hook, media
+ device/      The hardware: PSVR USB/HID protocol, head tracking, the headset session, the DS4
+ win/         Windows services: monitors, app windows, capture, input injection, mouse hook, media
+ panel/       The control panel on the main screen (Tk)
+ legacy/      The old SteamVR overlay mode (still selectable in the control panel)
 ```
 
-`engine.py` runs a VR session: headset on -> every frame: head pose -> `shell.update()` -> `renderer.draw()`.
+`engine.py` runs a VR session: headset on -> every frame: head pose -> `shell.update()` -> pointer input ->
+`renderer.draw_eye()` for both eyes -> lens correction. When the session ends (headset off), every app window
+goes back to the main screen until the next session.
 `__main__.py` builds everything and starts the control panel on the main screen (`panel/`).
 
 ## Main ideas
@@ -32,7 +36,10 @@ Each layer only uses the layers below it. Hardware and Windows details never lea
 - **View** (`ui/view.py`): a tree of widgets (buttons, sliders, lists...) drawn into one picture, sized by
   viewing angle so text is equally readable near or far. Dock, dialogs, title bars and native apps are views.
 - **Shell** (`shell/shell.py`): owns the windows (one per entry in `settings.panels`) and the system
-  interface, decides what is shown every frame and routes pointer input to the right surface.
+  interface (title bars and settings cards in `chrome.py`, dock and player in `dock.py`, dialogs in
+  `dialogs.py`) and decides what is shown every frame. Apps reach the shell only through `AppHost`.
+- **Pointer** (`shell/pointer.py`): the mouse / DS4 as a ray; the surface it hits gets the input. A press
+  captures the pointer until release (drags keep going even off the surface).
 - **Threads**: the mouse hook and the controller only *queue* input; everything that changes the VR space
   runs on the render thread, once per frame. The settings store is the only state shared with the control
   panel (it is thread-safe).
@@ -48,9 +55,12 @@ Each layer only uses the layers below it. Hardware and Windows details never lea
 | Look of buttons, sliders, colors, fonts  | `ui/theme.py`, `ui/widgets.py`|
 | Lens correction, eye rendering           | `render/headset.py`           |
 | Headset commands, sensors                | `device/psvr.py`              |
-| Moving app windows to the VR monitor     | `platform/windows.py`         |
+| Moving app windows to the VR monitor     | `win/windows.py`              |
+| Size of Windows apps in VR, click forwarding | `apps/desktop.py`, `apps/forwarding.py` |
+| Mouse / controller as VR pointer         | `shell/pointer.py`, `win/mouse_hook.py`, `device/gamepad.py` |
 
 ## Checking changes
 
-`PSVR_STRAIGHT_VIEW=1` renders as if you look straight ahead (with the headset lying on the desk), so a
-screenshot of the headset monitor shows the real layout through both lenses.
+- `PSVR_SIMULATOR=1`: no headset needed - the two-lens picture in a window on the main screen.
+- `PSVR_STRAIGHT_VIEW=1`: with the headset, render as if you look straight ahead (headset on the desk).
+- `PSVR_SNAPSHOT=<file.png>`: save the two-lens picture every few seconds, to see exactly what the eyes get.

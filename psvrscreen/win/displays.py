@@ -9,6 +9,7 @@ from ctypes import wintypes
 user32 = ctypes.windll.user32
 
 VR_MONITOR_ID = "MTT1337"
+VR_MONITOR_MODE = (2560, 1440, 225)   # the VR monitor: many pixels and Windows' biggest scaling there
 HEADSET_MONITOR_ID = "SNYB403"
 HEADSET_HZ = 90
 

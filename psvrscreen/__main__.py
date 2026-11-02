@@ -1,10 +1,10 @@
 """PSVR Screen: your PC screen in VR, controlled from a 3D control panel and the gamepad."""
 import ctypes
 
-from .direct import DirectEngine
 from .device.gamepad import GamepadMouse
 from .panel.control_panel import ControlPanel
 from .core.settings import SettingsStore
+from .engine import DirectEngine
 from .legacy.steamvr_overlay import VREngine
 
 

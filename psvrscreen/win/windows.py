@@ -1,15 +1,13 @@
-"""App windows for the VR space: list them, move them onto the (invisible) VR monitor, and put them back.
+"""Windows app windows: list them, identify them, move them onto the (invisible) VR monitor and back.
 
 A window shown in VR lives on the VR monitor so it never covers or receives clicks on your main screen.
-Its pixel size there sets how big everything inside it looks: fewer pixels on the same VR panel = bigger.
+How big it is there (and in VR) is decided by apps/desktop.py.
 """
 import ctypes
-import math
 import os
 from ctypes import wintypes
 
 from . import displays
-from ..core.settings import new_panel
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -22,32 +20,7 @@ SW_RESTORE = 9
 SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE = 0x0001, 0x0004, 0x0010
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
-BASE_WINDOW_SIZE = (1600, 1000)   # window pixels at text size 1.0 (readable sizing off)
-WINDOW_ASPECT = 1.6               # width / height of windows in VR
-VR_MONITOR_MODE = (2560, 1440, 225)   # the VR monitor: many pixels and Windows' biggest scaling there
-APP_TEXT_PX = 27                  # normal app text height at 225% scaling (9 pt), in pixels
-TEXT_DEGREES = 1.4                # how tall that text should look in VR at text size 1.0 (~15 headset pixels:
-                                  # clearly readable; 1.8 made every app a wall in front of you)
-# New windows open this far away: big windows close up crowd you; farther + bigger looks the same to the eye
-# (same angle, same text size) but calm. Their width is scaled for the distance (see natural_layout).
-NEW_WINDOW_WIDTH, NEW_WINDOW_DISTANCE = 4.3, 2.5
-MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH = 480, VR_MONITOR_MODE[0]
-MAX_WINDOW_DEGREES = 110          # a window never grows wider than this much of your view
-NEW_WINDOW_MAX_DEGREES = 50       # a newly opened window is at most half your view (others stay visible)
-WINDOW_BOTTOM_DEGREES = 12        # new windows end at most this far below eye level (the player starts ~14 deg)
-IGNORED_TITLES = {"Program Manager", "PSVR Screen", "PSVR Screen - headset", "psvr-screen-gl"}
-
-
-def pixels_per_degree(panel):
-    """Window pixels per degree of view that give app text TEXT_DEGREES (times its text size) in VR."""
-    return APP_TEXT_PX / (TEXT_DEGREES * panel["text_zoom"])
-
-
-def width_for_pixels(panel, pixel_width):
-    """VR width (m) at the panel's distance that shows `pixel_width` window pixels with readable text -
-    for apps that refuse to be made smaller (e.g. Steam): then the VR window grows instead."""
-    degrees = min(pixel_width / pixels_per_degree(panel), MAX_WINDOW_DEGREES)   # then the text gets a bit smaller
-    return 2 * panel["distance"] * math.tan(math.radians(degrees) / 2)
+IGNORED_TITLES = {"Program Manager", "PSVR Screen", "PSVR Screen - headset", "PSVR Screen - simulator"}
 
 
 def actual_size(hwnd):
@@ -56,50 +29,17 @@ def actual_size(hwnd):
     return r.right - r.left, r.bottom - r.top
 
 
-def natural_layout(hwnd, distance=NEW_WINDOW_DISTANCE):
-    """An app opens in VR exactly as it is in Windows: the same size in points (so the same layout), on the
-    VR monitor's 225% that is 2.25x the pixels of a 100% screen. Returns its VR width (m), shape
-    (height / width) and pixel width. The VR width gives readable text, but at most NEW_WINDOW_MAX_DEGREES
-    of your view (a big app then starts with smaller text - scale it up in VR, the page scales along)."""
+def normal_size_points(hwnd):
+    """The window's size when not maximized, in points (pixels at 100% scaling) - its layout's size,
+    the same on any monitor."""
     placement = WINDOWPLACEMENT(length=ctypes.sizeof(WINDOWPLACEMENT))
     user32.GetWindowPlacement(hwnd, ctypes.byref(placement))
-    r = placement.rcNormalPosition          # its size when not maximized
+    r = placement.rcNormalPosition
     w, h = max(1, r.right - r.left), max(1, r.bottom - r.top)
-    monitor = next((d for d in displays.list_displays()
-                    if d.left <= (r.left + r.right) // 2 < d.left + d.width), None)
+    monitor = next((d for d in displays.list_displays() if d.left <= (r.left + r.right) // 2 < d.left + d.width),
+                   None)
     scale = (displays.get_scale(monitor) or 100) if monitor else 100
-    aspect = h / w
-    vr_pixels = w * 100 / scale * VR_MONITOR_MODE[2] / 100   # same size in points, on the VR monitor
-    # The VR monitor is 2560x1440: a bigger app is made as big as fits (its layout gets a bit more compact).
-    vr_pixels = max(MIN_WINDOW_WIDTH, min(vr_pixels, VR_MONITOR_MODE[0], VR_MONITOR_MODE[1] / aspect))
-    biggest = NEW_WINDOW_MAX_DEGREES / max(1.0, aspect)   # tall windows (calculator): limit the height too
-    degrees = max(15.0, min(biggest, vr_pixels * TEXT_DEGREES / APP_TEXT_PX))
-    return 2 * distance * math.tan(math.radians(degrees) / 2), aspect, vr_pixels
-
-
-def window_pixels(panel, readable=True):
-    """How many real pixels a window gets on the VR monitor.
-
-    A window keeps its own pixel size ("pixels", at text size 1.0): making it bigger or smaller in VR scales
-    the whole page with it, like a picture - text included. Only resizing the app itself changes what fits
-    inside (see SourceManager._follow_window), and Text size 1.5x = 1.5x fewer pixels = everything 1.5x
-    bigger in the same VR window. With the VR monitor at 225% the letters are drawn big and then smoothly
-    scaled down: round, like the VR dock - not blocky."""
-    if not readable:
-        width = BASE_WINDOW_SIZE[0] / panel["text_zoom"]
-    else:
-        width = base_pixels(panel) / panel["text_zoom"]
-    width = max(MIN_WINDOW_WIDTH, min(MAX_WINDOW_WIDTH, int(width / 20) * 20))   # 20 px steps
-    return width, int(width * panel.get("aspect", 1 / WINDOW_ASPECT))   # the app's own shape
-
-
-def base_pixels(panel):
-    """The window's pixel width at text size 1.0. Older panels without one: what gives readable text at
-    their current size in VR."""
-    if panel.get("pixels"):
-        return panel["pixels"]
-    degrees = math.degrees(2 * math.atan(panel["width"] / 2 / max(panel["distance"], 0.1)))
-    return degrees * APP_TEXT_PX / TEXT_DEGREES
+    return w * 100 / scale, h * 100 / scale
 
 
 class WINDOWPLACEMENT(ctypes.Structure):
@@ -187,18 +127,6 @@ def list_open_windows():
 
     user32.EnumWindows(callback, 0)
     return result
-
-
-def new_window_panel(hwnd, title, exe):
-    """A VR panel for an app window, at its natural size and shape (see natural_layout)."""
-    width, aspect, pixels = natural_layout(hwnd)
-    # Eye level, but a tall window is lifted so its bottom stays above the dock and music player.
-    lowest = -NEW_WINDOW_DISTANCE * math.tan(math.radians(WINDOW_BOTTOM_DEGREES))
-    height = max(0.0, lowest + width * aspect / 2)
-    panel = new_panel("window", title, exe, hwnd, width=width, distance=NEW_WINDOW_DISTANCE, height=height)
-    panel["aspect"] = aspect
-    panel["pixels"] = pixels   # the app's own size from Windows; the VR window scales the page
-    return panel
 
 
 def find_window(exe, title):

@@ -1,13 +1,14 @@
 """Control panel on the main monitor: live 3D preview of the VR layout + sliders that apply instantly."""
 import math
-import threading
 import time
 import tkinter as tk
 from tkinter import ttk
 
+from ..apps.desktop import new_panel_for
+from ..core.settings import LIMITS, SHORTCUT_ACTIONS, new_panel
+from ..shell import workspace
 from ..win import displays, windows
 from ..win import shortcuts as shortcut_keys
-from ..core.settings import LIMITS, SHORTCUT_ACTIONS, new_panel
 
 BG = "#14181f"
 PANEL = "#1b2029"
@@ -333,21 +334,6 @@ class ControlPanel:
                         variable=self.own_room,
                         command=lambda: store.update(own_room=self.own_room.get())).pack(anchor="w", pady=(4, 0))
 
-        self.sharp = tk.BooleanVar(value=s.sharp_text)
-        ttk.Checkbutton(headset_tab, text="Big round text in windows (VR monitor at 2560x1440, 225%)",
-                        variable=self.sharp,
-                        command=lambda: store.update(sharp_text=self.sharp.get())).pack(anchor="w", pady=(16, 0))
-        head = ttk.Frame(headset_tab, style="Panel.TFrame")
-        head.pack(fill="x", pady=(10, 0))
-        ttk.Label(head, text="VR monitor (only when big round text is off)").pack(side="left")
-        self.text_size_label = ttk.Label(head, text=displays.describe(s.vr_text_size), style="Muted.TLabel")
-        self.text_size_label.pack(side="right")
-        scale = ttk.Scale(headset_tab, from_=1, to=len(displays.TEXT_SIZES), length=380,
-                          command=lambda v: self.text_size_label.config(text=displays.describe(round(float(v)))))
-        scale.set(s.vr_text_size)
-        scale.bind("<ButtonRelease-1>", lambda e: self._apply_text_size(round(scale.get())))
-        scale.pack(fill="x")
-        self.text_size_scale = scale
 
         ttk.Label(headset_tab, text="Lens fine-tuning (direct mode)", style="Title.TLabel").pack(anchor="w", pady=(18, 0))
         for name, label, fmt in LENS_SLIDERS:
@@ -537,8 +523,7 @@ class ControlPanel:
         open_windows = [w for w in windows.list_open_windows() if w[0] not in in_vr]
         for hwnd, title, exe in open_windows:
             menu.add_command(label=f"{_short(title, 50)}   ({exe})",
-                             command=lambda h=hwnd, t=title, x=exe: self.store.add_panel(
-                                 windows.new_window_panel(h, t, x)))
+                             command=lambda h=hwnd, t=title, x=exe: self._add(new_panel_for(h, t, x)))
         if not open_windows:
             menu.add_command(label="(no other open windows - open an app first)", state="disabled")
         menu.add_separator()
@@ -546,22 +531,15 @@ class ControlPanel:
         for kind in displays.view_kinds():
             if kind not in in_use:
                 menu.add_command(label=f"Desktop view {kind[4:]} (a whole desktop with big text)",
-                                 command=lambda k=kind: self.store.add_panel(new_panel(
+                                 command=lambda k=kind: self._add(new_panel(
                                      k, f"Desktop view {k[4:]}", width=3.0, distance=1.6, curvature=0.2)))
         menu.add_command(label="Main monitor (whole screen - for videos)",
-                         command=lambda: self.store.add_panel(new_panel("main", "Main monitor")))
+                         command=lambda: self._add(new_panel("main", "Main monitor")))
         menu.tk_popup(event.x_root, event.y_root)
 
-    def _apply_text_size(self, level):
-        self.text_size_scale.set(level)   # snap to a whole step
-        self.store.update(vr_text_size=level)
-        self.text_size_label.config(text=displays.describe(level) + "  - applying...")
-
-        def work():
-            displays.set_vr_text_size(level)
-            self.root.after(0, lambda: self.text_size_label.config(text=displays.describe(level)))
-
-        threading.Thread(target=work, daemon=True).start()
+    def _add(self, panel):
+        """Into VR where you look; the windows there make room."""
+        workspace.add_window(self.store, panel, -math.degrees(self.engine.look_yaw))
 
     def _reset_lens(self):
         self.store.update(**LENS_DEFAULTS)

@@ -5,7 +5,6 @@ The VR space holds several panels (a monitor or a single app window). The panel 
 """
 import copy
 import json
-import math
 import os
 import threading
 import uuid
@@ -27,10 +26,6 @@ PANEL_KEYS = ("yaw", "width", "distance", "height", "curvature", "tilt", "turn",
 # The two locks on a window's top bar: position lock freezes where it is, settings lock freezes how it looks.
 POSITION_KEYS = ("yaw", "distance", "height")
 LOOK_KEYS = ("width", "curvature", "tilt", "turn", "roll", "opacity", "text_zoom")
-IN_FRONT_STEP = 0.35   # one layer: a new window in front comes this much closer / old ones go back (m)
-ROOM_GAP_DEGREES = 2.0  # space left between windows that slid aside for a new one
-TUCKED_BEHIND = 0.3     # a window that stepped back may stay this much of its width behind the new one
-MAX_LAYER_DISTANCE = 4.0   # windows don't step back farther than this (m)
 # What an app's profile remembers (not where it is around you, so new windows still spread out)
 PROFILE_KEYS = LOOK_KEYS + ("distance", "height", "lock_position", "lock_look", "aspect", "pixels")
 
@@ -126,89 +121,6 @@ def new_panel(source, title="", exe="", hwnd=0, **layout):
     return panel
 
 
-def _half_degrees(panel):
-    """Half the angle a panel covers around you, left to right."""
-    return math.degrees(math.atan(panel["width"] / 2 / max(panel["distance"], 0.1)))
-
-
-def _make_room(panels, new):
-    """A new window opens right where you look and becomes the point in front. App windows already there
-    step one layer back (same look, see _step_back) and slide aside just enough to peek out from behind it
-    (left ones left, right ones right, a centered one to the emptier side), a magnet group as one piece.
-    Monitors and position-locked windows stay; those still in the way are returned."""
-    sliding, fixed = {}, []
-    for p in panels:
-        if not p.get("shown", True):
-            continue
-        if p.get("source") == "window" and not p.get("lock_position"):
-            sliding.setdefault(p.get("group") or p["id"], []).append(p)
-        else:
-            fixed.append(p)
-    center, half = new["yaw"], _half_degrees(new)
-    blocks = []
-    for members in sliding.values():
-        left = min(m["yaw"] - _half_degrees(m) for m in members)
-        right = max(m["yaw"] + _half_degrees(m) for m in members)
-        if left < center + half and right > center - half:   # in the way: one layer back
-            # ...but always in front of a monitor there, or it would disappear behind it
-            behind = [f["distance"] - IN_FRONT_STEP for f in fixed
-                      if abs(f["yaw"] - (left + right) / 2) < _half_degrees(f) + (right - left) / 2]
-            for m in members:
-                _step_back(m, min(behind + [MAX_LAYER_DISTANCE]))
-            left = min(m["yaw"] - _half_degrees(m) for m in members)
-            right = max(m["yaw"] + _half_degrees(m) for m in members)
-        blocks.append([left, right, members])
-    sides = {1: [], -1: []}
-    ahead = []
-    for b in blocks:
-        mid = (b[0] + b[1]) / 2 - center
-        (ahead if abs(mid) < 1.0 else sides[1 if mid > 0 else -1]).append(b)
-    for b in ahead:   # straight ahead: to the side with less already there
-        side = 1 if sum(x[1] - x[0] for x in sides[1]) <= sum(x[1] - x[0] for x in sides[-1]) else -1
-        sides[side].append(b)
-    # Push each block (closest to the new window first) past the edge of the one before it, minus what may
-    # stay tucked behind.
-    edge = center + half
-    for left, right, members in sorted(sides[1], key=lambda b: b[0]):
-        shift = max(0.0, edge - left - TUCKED_BEHIND * (right - left))
-        for m in members:
-            m["yaw"] = clamp("yaw", m["yaw"] + shift)
-        edge = right + shift + ROOM_GAP_DEGREES
-    edge = center - half
-    for left, right, members in sorted(sides[-1], key=lambda b: -b[1]):
-        shift = min(0.0, edge - right + TUCKED_BEHIND * (right - left))
-        for m in members:
-            m["yaw"] = clamp("yaw", m["yaw"] + shift)
-        edge = left + shift - ROOM_GAP_DEGREES
-    return [p for p in fixed if abs(p["yaw"] - center) < _half_degrees(p) + half]
-
-
-def _step_back(panel, farthest):
-    """One layer farther away (not beyond `farthest`), grown by the same factor: it looks exactly as big
-    as before (same text)."""
-    distance = clamp("distance", min(panel["distance"] + IN_FRONT_STEP, farthest))
-    if distance <= panel["distance"] or locked(panel, "distance"):
-        return
-    k = distance / panel["distance"]
-    panel["distance"], panel["width"], panel["height"] = distance, panel["width"] * k, panel["height"] * k
-
-
-def _fit_in_front(panel, behind):
-    """Put a new window just in front of a monitor/locked window that is there, shaped to match it: the
-    same curve around the same center (like rings), so it doesn't poke through its curved edges. Coming
-    closer, it shrinks by the same factor, so it still looks just as big (same text size)."""
-    distance = clamp("distance", min(panel["distance"], behind["distance"] - IN_FRONT_STEP))
-    k = distance / panel["distance"]
-    panel["distance"], panel["width"], panel["height"] = distance, panel["width"] * k, panel["height"] * k
-    panel["tilt"] = behind["tilt"]
-    if behind["curvature"] > 0.001:
-        radius_behind = behind["width"] / (2 * math.pi * behind["curvature"])
-        radius = radius_behind - (behind["distance"] - panel["distance"])
-        panel["curvature"] = clamp("curvature", panel["width"] / (2 * math.pi * radius)) if radius > 0.3 else 0.0
-    else:
-        panel["curvature"] = 0.0
-
-
 class SettingsStore:
     """Thread-safe holder; `version` increases on every change so readers can spot updates cheaply."""
 
@@ -282,17 +194,17 @@ class SettingsStore:
         if panel.get("source") == "window" and panel.get("exe"):
             self._settings.app_profiles[panel["exe"].lower()] = {k: panel[k] for k in PROFILE_KEYS if k in panel}
 
-    def add_panel(self, panel, center_yaw=0.0):
+    def add_panel(self, panel, center_yaw=0.0, arrange=None):
         """Adds a panel where you look (`center_yaw`, degrees) and selects it - with the app's own profile if
-        it was in VR before. Windows already there slide aside (see _make_room). Returns its index."""
+        it was in VR before. `arrange(panels, panel)` may move it and the others to make room (see
+        shell.workspace); it runs while the store is locked. Returns its index."""
         with self._lock:
             panels = self._settings.panels
             if panel.get("source") == "window":
                 panel.update(self._settings.app_profiles.get((panel.get("exe") or "").lower(), {}))
             panel["yaw"] = clamp("yaw", center_yaw)
-            in_the_way = _make_room(panels, panel)
-            if in_the_way:
-                _fit_in_front(panel, min(in_the_way, key=lambda p: p["distance"]))
+            if arrange:
+                arrange(panels, panel)
             panel["group"] = None
             panels.append(panel)
             self._settings.selected = len(panels) - 1
@@ -312,6 +224,20 @@ class SettingsStore:
                 self._remember_profile(panel)
                 self._mirror_selected()
                 self.version += 1
+
+    def index_of(self, panel_id):
+        with self._lock:
+            return next((i for i, p in enumerate(self._settings.panels) if p["id"] == panel_id), None)
+
+    def update_window(self, panel_id, **fields_):
+        """update_panel by the window's id (indexes change when windows are added or removed)."""
+        index = self.index_of(panel_id)
+        if index is not None:
+            self.update_panel(index, **fields_)
+
+    def remove_window(self, panel_id):
+        index = self.index_of(panel_id)
+        return self.remove_panel(index) if index is not None else None
 
     def remove_panel(self, index):
         with self._lock:
