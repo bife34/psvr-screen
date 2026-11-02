@@ -128,6 +128,7 @@ class Shell:
         self._adopt_checked = 0.0
         self._settings = store.get()
         self.look_yaw = 0.0                      # where you look (degrees, + = right), set by the engine
+        self.look_pitch = 0.0                    # (degrees, + = up)
         self.aspects = {}                        # window id -> picture height / width (for the control panel)
         self.video_detector = VideoDetector()
         self.watch_buttons = {}                  # hwnd -> WatchButton (browser windows showing a VR video)
@@ -190,6 +191,7 @@ class Shell:
             info, self._opened_file = self._opened_file, None
             self.stop_video()
             self.video = ImmersiveVideo(self, info, None)
+        self.pointer.background = self.video.grab if self.video is not None else None
         if self.video is not None:
             return self.video.surfaces(now) + self._menu_surfaces()
         surfaces = []
@@ -564,7 +566,8 @@ class Shell:
         self.open_menu("Video", [
             ("Pause" if playing else "Play", Icon.PAUSE if playing else Icon.PLAY, video.play_pause, "flat"),
             ("Video settings", Icon.SETTINGS, video.toggle_settings, "flat"),
-            ("Recenter", Icon.RECENTER, self.recenter, "flat"),
+            ("Recenter here (where I look, also up / down)", Icon.RECENTER, video.recenter_here, "flat"),
+            ("Straighten (no tilt)", Icon.RECENTER, video.straighten, "flat"),
             ("Mouse → PC", Icon.MOUSE, lambda: self.dock_action("mouse_to_pc"), "flat"),
             ("Exit video", Icon.CLOSE, self.stop_video, "danger")])
 

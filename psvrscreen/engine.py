@@ -147,6 +147,7 @@ class DirectEngine(threading.Thread):
             self.look_yaw = 0.0 if s.follow_head else math.atan2(math.sin(yaw), math.cos(yaw))
             self.look_pitch = 0.0 if s.follow_head else pitch
             self.shell.look_yaw = -math.degrees(self.look_yaw)
+            self.shell.look_pitch = math.degrees(self.look_pitch)
             head_rot = np.array(q_to_matrix(q), np.float32)
             self.headset_worn = headset.worn
 

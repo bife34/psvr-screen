@@ -7,6 +7,8 @@ under the window (in VR) or above the dock (a browser on the main screen).
 ImmersiveVideo is the video mode: the video plays on a sphere around you (render/video_sphere.py) instead
 of the room and the windows; its controls float below in front of the video while the pointer is in VR, and
 their ⚙ opens the video settings (view, 3D, size, distance, brightness, volume - all sliders).
+Moving the video: grab empty space with the left button and drag (it follows the pointer, also up / down),
+"Recenter here" (its middle goes where you look), or the Tilt slider - like HereSphere / DeoVR / Skybox.
 Two sources: the site's stream, played here (the browser's own playback is paused), or - when the site's
 stream can't be played - the browser window's picture (WindowPlayer; the browser plays it, with its sound).
 """
@@ -209,6 +211,7 @@ class ImmersiveVideo:
         self.settings_open = False
         self._pointer_seen = (None, 0.0)         # last pointer direction and when it changed
         self._closed = False
+        self.grab = _VideoGrab(self)             # the pointer's target for presses on nothing
         if self.window:
             threading.Thread(target=self._watch_window, daemon=True, name="vr-video-window").start()
 
@@ -245,6 +248,14 @@ class ImmersiveVideo:
 
     def recentered(self):
         self.front_yaw = 0.0
+
+    def recenter_here(self):
+        """The video's middle goes where you look - left / right and up / down."""
+        self.front_yaw = self.shell.look_yaw
+        self.set_value("video_tilt", self.shell.look_pitch)
+
+    def straighten(self):
+        self.set_value("video_tilt", 0.0)
 
     # -- actions from the controls -------------------------------------------------------------------
     def play_pause(self):
@@ -303,7 +314,8 @@ class ImmersiveVideo:
                 self.texture.upload(frame)
         s = self.shell.settings()
         front = geometry.rotate_y(-self.front_yaw)
-        out = [Surface("video", front, 1, 1, texture=self.texture, shape="sphere",   # centered between your eyes
+        turned = front @ geometry.rotate_x(s.video_tilt)
+        out = [Surface("video", turned, 1, 1, texture=self.texture, shape="sphere",   # centered between your eyes
                        data={"projection": self.projection, "stereo": self.stereo, "distance": s.video_distance,
                              "screen_degrees": s.video_screen_degrees, "screen_curve": s.video_screen_curve,
                              "size": s.video_size, "brightness": s.video_brightness,
@@ -335,6 +347,25 @@ class ImmersiveVideo:
         on_ui = pointer.hit is not None and pointer.hit[0].id in ("video-controls", "video-settings")
         return (self.player.paused or self.player.ended or self.settings_open or on_ui
                 or now - self._pointer_seen[1] < CONTROLS_SECONDS)
+
+
+class _VideoGrab:
+    """Left button on empty space + drag: the video follows the pointer (turns left / right, tilts up / down)."""
+
+    def __init__(self, video):
+        self.video = video
+        self._start = None
+
+    def on_pointer(self, e):
+        v = self.video
+        if e.kind == "press" and e.button == "left":
+            self._start = (v.front_yaw, v.shell.settings().video_tilt)
+        elif e.kind == "drag" and self._start is not None:
+            yaw0, tilt0 = self._start
+            v.front_yaw = yaw0 + (e.yaw - e.start_yaw)
+            v.set_value("video_tilt", tilt0 + (e.pitch - e.start_pitch))
+        elif e.kind == "release":
+            self._start = None
 
 
 def _time(seconds):
@@ -401,7 +432,7 @@ class Controls(View):
         right = Row([Spacer(flex=1),
                      button("settings", icon=Icon.SETTINGS, action=v.toggle_settings, selected=v.settings_open,
                             w=h + 10),
-                     button("recenter", icon=Icon.RECENTER, action=v.shell.recenter, w=h + 10),
+                     button("recenter", icon=Icon.RECENTER, action=v.recenter_here, w=h + 10),
                      button("mouse", "PC", Icon.MOUSE, action=lambda: v.shell.dock_action("mouse_to_pc")),
                      button("exit", "Exit", Icon.CLOSE, action=v.shell.stop_video, style="danger")],
                     w=SIDE_WIDTH, h=h, gap=6)
@@ -484,7 +515,10 @@ class VideoSettings(View):
                  distance_slider(),
                  Label("Distance: deeper or nearer for your eyes, same size", size=theme.SMALL - 6,
                        color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24)]
-        rows += [slider("video_brightness", "Brightness", "{:.0f}%", 100),
+        rows += [slider("video_tilt", "Tilt (up / down)", "{:+.0f}°"),
+                 Label("Or grab empty space and drag the video; ⟳ puts its middle where you look",
+                       size=theme.SMALL - 6, color=theme.MUTED, w=w, h=int(theme.ROW * 0.6), indent=24),
+                 slider("video_brightness", "Brightness", "{:.0f}%", 100),
                  slider("video_volume", "Volume", "{:.0f}%", 100)]
         return Column(rows, pad=14, bg=theme.BG, radius=28)
 

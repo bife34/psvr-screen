@@ -16,6 +16,7 @@ import numpy as np
 
 from ..core import geometry
 from ..scene.events import PointerEvent
+from ..scene.surface import Surface
 from ..win import inject
 from ..win.mouse_hook import MouseHook
 
@@ -43,6 +44,7 @@ class Pointer:
         self._hover = None            # surface whose target got the last "move"
         self._captured = None         # (surface, button, press event) while a button is held
         self.on_press = None          # shell callback(surface or None): a press happened (closes dialogs...)
+        self.background = None        # target for presses on nothing (the video, to drag it around you)
 
     # -- switching the mouse into VR (any thread) ------------------------------------------------
     def start(self):
@@ -200,6 +202,8 @@ class Pointer:
             surface = self.hit[0] if self.hit else None
             if self.on_press:
                 self.on_press(surface, name)
+            if surface is None and self.background is not None and name == "left":
+                surface = Surface("background", np.eye(4, dtype=np.float32), 0, 0, target=self.background)
             if surface is None:
                 return
             e = self._event("press", surface, button=name, alt=alt or _key_down(VK_MENU))
