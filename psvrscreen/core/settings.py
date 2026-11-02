@@ -205,7 +205,6 @@ class SettingsStore:
             panel["yaw"] = clamp("yaw", center_yaw)
             if arrange:
                 arrange(panels, panel)
-            panel["group"] = None
             panels.append(panel)
             self._settings.selected = len(panels) - 1
             self._mirror_selected()

@@ -115,7 +115,6 @@ class Shell:
         self._settings = store.get()
         self.look_yaw = 0.0                      # where you look (degrees, + = right), set by the engine
         self.aspects = {}                        # window id -> picture height / width (for the control panel)
-        self._heights = {}                       # window id -> height in m of the shown windows (magnets)
 
     # -- lifetime --------------------------------------------------------------------------------
     def start(self):
@@ -164,7 +163,6 @@ class Shell:
             s = self._settings = self.store.get()
         surfaces = []
         selected = s.panels[s.selected]["id"] if s.panels else None
-        heights = {}
         for p in s.panels:
             window = self.windows.get(p["id"])
             if window is None:
@@ -176,7 +174,6 @@ class Shell:
             aspect = window.content.aspect
             self.aspects[p["id"]] = aspect
             height = p["width"] * aspect
-            heights[p["id"]] = height
             model = geometry.placement(p["yaw"], p["height"], p["distance"], p.get("turn", 0.0), p["tilt"],
                                        p.get("roll", 0.0))
             if p["id"] == selected and len(s.panels) > 1:
@@ -187,7 +184,6 @@ class Shell:
                                      data={"window_id": p["id"]})
             surfaces.append(window.surface)
             surfaces += self._chrome(p, window, now)
-        self._heights = heights
         surfaces += self._system_ui()
         return surfaces
 
@@ -400,7 +396,7 @@ class Shell:
         if e.button == "middle":
             self.gesture = workspace.WindowBend(self.store, wid, e)
         elif e.button == "left" and not p.get("lock_position"):
-            self.gesture = workspace.WindowMove(self.store, wid, e, dict(self._heights))
+            self.gesture = workspace.WindowMove(self.store, wid, e)
 
     def gesture_drag(self, e):
         if self.gesture:

@@ -49,7 +49,7 @@ goes back to the main screen until the next session.
 | Change                                   | Place                         |
 |------------------------------------------|-------------------------------|
 | A new native VR app                      | `apps/<name>.py` (+ register it in `apps/__init__.py`) |
-| How new windows are placed / magnets     | `shell/workspace.py`          |
+| How new windows are placed / moved       | `shell/workspace.py`          |
 | Dock, music player                       | `shell/dock.py`               |
 | Title bar or settings card of a window   | `shell/chrome.py`             |
 | Look of buttons, sliders, colors, fonts  | `ui/theme.py`, `ui/widgets.py`|
