@@ -46,7 +46,8 @@ LASER_COLOR = (0.45, 0.72, 1.0, 0.6)
 LASER_FADE_PART = 0.55            # "fading beam": the part of the way it shows
 LASER_FADE_PIECES = 10
 LAUNCHED_FROM_VR_SECONDS = 20     # apps can take a while to show their window after launching
-LENS_SIZE, LENS_ZOOM = 0.38, 2.0  # zoom lens: width as part of the window, magnification
+LENS_HEIGHT, LENS_ZOOM = 0.23, 2.0  # zoom lens: a strip the window's width, this tall (part of the width); 2x
+LENS_LIFT = 0.05                  # meters in front of the window
 POINTER_BLUE = (0.31, 0.61, 0.98, 1.0)
 
 
@@ -407,21 +408,22 @@ class Shell:
         return out
 
     def _lens(self):
-        """Zoom lens: on a window with zoom on, a magnified view of the spot under the pointer, floating just
-        in front of it."""
+        """Zoom lens: on a window with zoom on, a magnified strip as wide as the window at the pointer's height,
+        floating just in front of it (bent like the window). The magnified part follows the pointer left /
+        right, so you read along a line."""
         hit = self.pointer.hit
         if not hit or hit[0].data.get("window_id") not in self.zoomed:
             return []
         s, _, u, v = hit
         if s.texture is None or not s.texture.ready:
             return []
-        lw, lh = s.width * LENS_SIZE, s.width * LENS_SIZE * 0.6
-        su, sv = lw / (s.width * LENS_ZOOM), lh / (s.height * LENS_ZOOM)
+        lw, lh = s.width, s.width * LENS_HEIGHT
+        su, sv = 1 / LENS_ZOOM, lh / (s.height * LENS_ZOOM)
         cu, cv = min(max(u, su / 2), 1 - su / 2), min(max(v, sv / 2), 1 - sv / 2)
-        model = s.frame_at(u, v, lift=0.05)
-        return [Surface("lens-frame", model @ geometry.translate(0, 0, -0.002), lw + 0.02, lh + 0.02,
+        model = s.model @ geometry.translate(0, (0.5 - v) * s.height, LENS_LIFT)
+        return [Surface("lens-frame", model @ geometry.translate(0, 0, -0.002), lw + 0.02, lh + 0.02, s.curvature,
                         color=POINTER_BLUE, layer=INTERFACE),
-                Surface("lens", model, lw, lh, texture=s.texture, layer=INTERFACE,
+                Surface("lens", model, lw, lh, s.curvature, texture=s.texture, layer=INTERFACE,
                         uv=(cu - su / 2, cv - sv / 2, cu + su / 2, cv + sv / 2))]
 
     # -- actions (from the interface) --------------------------------------------------------------
