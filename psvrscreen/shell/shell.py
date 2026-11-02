@@ -259,10 +259,13 @@ class Shell:
             height = p["width"] * aspect
             model = geometry.placement(p["yaw"], p["height"], p["distance"], p.get("turn", 0.0), p["tilt"],
                                        p.get("roll", 0.0))
+            curve = geometry.window_curvature(p["width"], p["distance"], p["curvature"])
             if p["id"] == selected and len(s.panels) > 1:
                 surfaces.append(Surface("frame:" + p["id"], model @ geometry.translate(0, 0, -0.01),
-                                        p["width"] + 0.06, height + 0.06, p["curvature"], color=POINTER_BLUE))
-            window.surface = Surface("window:" + p["id"], model, p["width"], height, p["curvature"],
+                                        p["width"] + 0.06, height + 0.06,
+                                        geometry.window_curvature(p["width"] + 0.06, p["distance"], p["curvature"]),
+                                        color=POINTER_BLUE))
+            window.surface = Surface("window:" + p["id"], model, p["width"], height, curve,
                                      texture=window.content.texture, opacity=p["opacity"], target=window.target,
                                      data={"window_id": p["id"]})
             surfaces.append(window.surface)
@@ -310,7 +313,8 @@ class Shell:
         bar.refresh()
         s = window.surface
         model = s.model @ geometry.translate(0, s.height / 2 + bar.height / 2, 0)
-        out.append(Surface("bar:" + wid, model, bar.width, bar.height, p["curvature"], texture=bar.texture,
+        out.append(Surface("bar:" + wid, model, bar.width, bar.height,
+                           geometry.window_curvature(bar.width, p["distance"], p["curvature"]), texture=bar.texture,
                            layer=INTERFACE, target=window.bar_target, data={"ui": True}))
         if settings_open:
             card = window.card
@@ -597,7 +601,7 @@ class Shell:
         elif choice[1] == "main":
             panel = new_panel("main", "Main monitor")
         else:
-            panel = new_panel(choice[1], f"Desktop view {choice[1][4:]}", width=3.0, distance=1.6, curvature=0.2)
+            panel = new_panel(choice[1], f"Desktop view {choice[1][4:]}", width=3.0, distance=1.6, curvature=0.65)
         workspace.add_window(self.store, panel, self.look_yaw)
         self._close_dialog()
 

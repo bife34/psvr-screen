@@ -86,6 +86,18 @@ def meters_per_degree(distance):
 # -- curved surfaces --------------------------------------------------------------------------------
 # A surface is a rectangle `width` x `height` centered at its origin, facing +z (you). With curvature > 0 it
 # bends around a vertical cylinder: the edges come toward you. curvature = part of a full circle it covers.
+def window_curvature(width, distance, curve):
+    """A window's curve (0 = flat, 1 = a circle around you at its distance) as its surface's curvature. The
+    circle's radius is distance / curve and doesn't depend on the window's size, like a curved monitor: a
+    bigger window covers more of the same circle - its middle stays put, its edges stay as far away."""
+    if curve <= 0.001 or distance <= 0:
+        return 0.0
+    return min(MAX_SURFACE_CURVATURE, width * curve / (2 * math.pi * distance))
+
+
+MAX_SURFACE_CURVATURE = 0.9      # never more than this part of a full circle (it would close on itself)
+
+
 def curve_radius(width, curvature):
     return width / (2 * math.pi * curvature) if curvature > 0.001 else None
 

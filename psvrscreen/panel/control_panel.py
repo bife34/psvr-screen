@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from ..apps.desktop import new_panel_for
+from ..core import geometry
 from ..core.settings import LIMITS, SHORTCUT_ACTIONS, new_panel, shown_title
 from ..shell import workspace
 from ..win import displays, windows
@@ -26,6 +27,8 @@ TAB_SELECTED = "#26406a"
 
 EYE_HEIGHT = 1.2       # seated eye height used for the floor in the preview (meters)
 PSVR_FOV_DEG = 100
+
+LOG_SLIDERS = ("width", "distance")   # sliders that move in proportion (0.5 -> 1 m is as far as 250 -> 500 m)
 
 SLIDERS = [
     # (setting, label, format) - all for the selected window
@@ -218,7 +221,7 @@ class Viewer3D:
     def _panel_geometry(self, p, index, aspect, selected, project, quads, edges, labels):
         sw, sh = p["width"], p["width"] * aspect
         cols = 24
-        radius = sw / (2 * math.pi * p["curvature"]) if p["curvature"] > 0.001 else None
+        radius = geometry.curve_radius(sw, geometry.window_curvature(sw, p["distance"], p["curvature"]))
         pts = []
         for i in range(cols + 1):
             u = i / cols - 0.5
@@ -376,16 +379,23 @@ class ControlPanel:
                selectbackground=[("readonly", "#2a3140")], selectforeground=[("readonly", TEXT)])
 
     def _slider(self, parent, name, label, fmt, value):
+        """A slider; Size and Distance move in proportion (fine up close, big steps far away)."""
         lo, hi = LIMITS[name]
+        log = name in LOG_SLIDERS
+        if log:
+            lo, hi, value_shown = math.log(lo), math.log(hi), value
+            value = math.log(max(value, LIMITS[name][0]))
+        else:
+            value_shown = value
         head = ttk.Frame(parent, style="Panel.TFrame")
         head.pack(fill="x", pady=(8, 0))
         ttk.Label(head, text=label).pack(side="left")
-        value_label = ttk.Label(head, text=fmt.format(value), style="Muted.TLabel")
+        value_label = ttk.Label(head, text=fmt.format(value_shown), style="Muted.TLabel")
         value_label.pack(side="right")
         var = tk.DoubleVar(value=value)
 
         def changed(_=None):
-            v = var.get()
+            v = math.exp(var.get()) if log else var.get()
             value_label.config(text=fmt.format(v))
             self.store.update(**{name: v})
 
@@ -543,7 +553,7 @@ class ControlPanel:
             if kind not in in_use:
                 menu.add_command(label=f"Desktop view {kind[4:]} (a whole desktop with big text)",
                                  command=lambda k=kind: self._add(new_panel(
-                                     k, f"Desktop view {k[4:]}", width=3.0, distance=1.6, curvature=0.2)))
+                                     k, f"Desktop view {k[4:]}", width=3.0, distance=1.6, curvature=0.65)))
         menu.add_command(label="Main monitor (whole screen - for videos)",
                          command=lambda: self._add(new_panel("main", "Main monitor")))
         menu.tk_popup(event.x_root, event.y_root)
@@ -564,8 +574,9 @@ class ControlPanel:
         s = self.store.get()
         for name, (var, label, fmt) in self.vars.items():
             value = getattr(s, name)
-            if abs(var.get() - value) > 1e-6:
-                var.set(value)
+            position = math.log(max(value, LIMITS[name][0])) if name in LOG_SLIDERS else value
+            if abs(var.get() - position) > 1e-6:
+                var.set(position)
                 label.config(text=fmt.format(value))
         self.own_room.set(s.own_room)
         self.engine_mode.set(s.engine)

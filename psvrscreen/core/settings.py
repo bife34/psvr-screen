@@ -4,6 +4,7 @@ The VR space holds several panels (a monitor or a single app window). The panel 
 (width, distance, ...) always mirror the *selected* panel, so sliders and the gamepad edit that one.
 """
 import copy
+import math
 import json
 import os
 import threading
@@ -53,7 +54,7 @@ class Settings:
     width: float = 1.6          # screen width in meters
     distance: float = 1.5       # meters in front of your eyes
     height: float = 0.0         # meters above (+) or below (-) eye level
-    curvature: float = 0.1      # 0 = flat, 1 = closed cylinder
+    curvature: float = 0.3      # 0 = flat, 1 = a circle around you at the window's distance (geometry.window_curvature)
     tilt: float = 0.0           # degrees; + leans the top of the screen back, - leans it toward you
     turn: float = 0.0           # degrees; turns the window around its vertical middle (+ = right edge back)
     roll: float = 0.0           # degrees; rotates the window like a picture on a wall (+ = clockwise)
@@ -65,6 +66,7 @@ class Settings:
     auto_add_windows: bool = True   # while you wear the headset, newly opened app windows go into VR
     sharp_text: bool = True     # big round text: VR monitor at 2560x1440 225%, windows sized for the headset
     shortcuts: dict = field(default_factory=lambda: dict(DEFAULT_SHORTCUTS))   # action -> "Ctrl+Alt+P"
+    curve_version: int = 2
     watching: list = field(default_factory=list)   # videos stopped partway, newest first: {path, position,
                                                    # duration, projection, stereo} (never in private mode)
     app_profiles: dict = field(default_factory=dict)   # app exe -> its last look (size, text, curve, locks...)
@@ -124,10 +126,10 @@ class Settings:
 # Slider limits, also used by the gamepad so both stay in range.
 LIMITS = {
     "yaw": (-170.0, 170.0),
-    "width": (0.3, 40.0),
-    "distance": (0.5, 30.0),
-    "height": (-15.0, 15.0),
-    "curvature": (0.0, 0.6),
+    "width": (0.1, 800.0),       # each window is its own container: any size at any distance
+    "distance": (0.3, 500.0),
+    "height": (-300.0, 300.0),
+    "curvature": (0.0, 1.0),
     "tilt": (-75.0, 75.0),
     "turn": (-80.0, 80.0),
     "roll": (-90.0, 90.0),
@@ -167,6 +169,21 @@ LIMITS = {
 def clamp(name, value):
     lo, hi = LIMITS[name]
     return max(lo, min(hi, value))
+
+
+CURVE_VERSION = 2   # 1: curvature was the part of a circle a window covered (bigger window = rounder bend)
+
+
+def _curves_around_you(settings):
+    """Older settings: turn each window's curvature into the new curve (the same shape it had)."""
+    def convert(look):
+        if look.get("curvature") and look.get("width") and look.get("distance"):
+            look["curvature"] = clamp("curvature", look["curvature"] * 2 * math.pi * look["distance"] / look["width"])
+    for panel in settings.panels:
+        convert(panel)
+    for profile in settings.app_profiles.values():
+        convert(profile)
+    settings.curve_version = CURVE_VERSION
 
 
 def _straight_back(panel, changes):
@@ -224,6 +241,8 @@ class SettingsStore:
             if not isinstance(settings.monitor, str):   # older settings used a number
                 settings.monitor = "main"
             settings.shortcuts = {**DEFAULT_SHORTCUTS, **settings.shortcuts}   # new actions get their default
+            if data.get("curve_version", 1) < CURVE_VERSION:
+                _curves_around_you(settings)
         except (OSError, ValueError):
             pass
         return cls(settings)
