@@ -46,7 +46,9 @@ class Library(Page):
     """A grid browser of places: Recent and the drives' folders. Subclasses say which files and what a click
     does (Videos, Photos)."""
     TITLE, ICON, EMPTY = "Videos", Icon.VIDEO, "No videos here"
+    RECENT_LABEL, RECENT_ICON = "Recent", Icon.HISTORY
     RECENT_HINT = "Videos you opened lately, and the newest in Downloads, Videos and Desktop"
+    RECENT_IS_PRIVATE = True       # private mode hides the first place
 
     def __init__(self, host):
         super().__init__(host)
@@ -61,6 +63,10 @@ class Library(Page):
     def recent(self):
         return files.recent_videos()
 
+    def first_place(self):
+        """(folders, files) of the first place: Recent."""
+        return [], self.recent()
+
     def folder(self, path):
         return files.folder_entries(path)
 
@@ -73,6 +79,17 @@ class Library(Page):
     def badges(self, path):
         return _kind(path)
 
+    def card(self, key, path):
+        """The card of a file in the grid."""
+        image, seconds = THUMBNAILS.get(path)
+        subtitle = " · ".join(x for x in (_duration(seconds), str(path.parent) if self.place == RECENT else "") if x)
+        return Card(key, path.name, image, CARD_W, CARD_H, badges=self.badges(path), icon=self.ICON,
+                    subtitle=subtitle or None, on_click=lambda: self.open(path), on_right=lambda: self.menu(path))
+
+    def extra_buttons(self, h):
+        """More buttons next to the folder's path."""
+        return []
+
     # -- places ------------------------------------------------------------------------------------------
     def _load(self):
         """Read the current place in the background (a big folder or a slow drive must not stall VR)."""
@@ -81,7 +98,7 @@ class Library(Page):
 
         def read():
             if place == RECENT:
-                dirs, items = [], self.recent()
+                dirs, items = self.first_place()
             else:
                 dirs, items = self.folder(place)
             if place == self.place:
@@ -109,7 +126,7 @@ class Library(Page):
     def build(self):
         w, h = PAGE_WIDTH - 64, theme.ROW
         private = self._private()
-        places = [Button("place:recent", "Recent", Icon.HISTORY, h=h, style="flat", selected=self.place == RECENT,
+        places = [Button("place:recent", self.RECENT_LABEL, self.RECENT_ICON, h=h, style="flat", selected=self.place == RECENT,
                          size=theme.TEXT - 4, on_click=lambda: self.go(RECENT))]
         for d in self.drives:
             here = self.place != RECENT and Path(self.place).anchor.lower() == d.lower()
@@ -126,11 +143,11 @@ class Library(Page):
             up = Button("up", "Up", Icon.UP, h=h - 8, style="normal", size=theme.TEXT - 6,
                         on_click=(lambda: self.go(parent)) if parent != Path(self.place) else None)
             rows.append(Row([up, Label(str(self.place), size=theme.SMALL - 4, color=theme.MUTED, flex=1, h=h,
-                                       indent=12)], w=w, h=h, gap=6))
+                                       indent=12), *self.extra_buttons(h - 8)], w=w, h=h, gap=6))
 
         per_page = COLUMNS * ROWS
         grid_h = ROWS * CARD_H + (ROWS - 1) * theme.GAP * 2
-        if self.place == RECENT and private:
+        if self.place == RECENT and private and self.RECENT_IS_PRIVATE:
             rows.append(Label("Recent is hidden in private mode - open a drive above", size=theme.SMALL,
                               color=theme.MUTED, w=w, h=grid_h, align="center"))
             rows.append(Spacer(h=h))
@@ -147,12 +164,7 @@ class Library(Page):
                 cards.append(Card(key, path.name, None, CARD_W, CARD_H, icon=Icon.FOLDER,
                                   on_click=lambda p=path: self.go(p)))
                 continue
-            image, seconds = THUMBNAILS.get(path)
-            subtitle = " · ".join(x for x in (_duration(seconds), str(path.parent) if self.place == RECENT else "")
-                                  if x)
-            cards.append(Card(key, path.name, image, CARD_W, CARD_H, badges=self.badges(path), icon=self.ICON,
-                              subtitle=subtitle or None, on_click=lambda p=path: self.open(p),
-                              on_right=lambda p=path: self.menu(p)))
+            cards.append(self.card(key, path))
         if self.loading:
             body = Label("Looking...", size=theme.SMALL, color=theme.MUTED, w=w, h=grid_h, align="center")
         elif not cards:

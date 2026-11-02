@@ -16,7 +16,7 @@ COLUMNS = 3
 TILES = [
     ("videos", "Videos", Icon.VIDEO, (10, 132, 255, 255), "180° · 360° · 3D"),
     ("photos", "Photos", Icon.PHOTO, (255, 149, 0, 255), "Pictures · 360°"),
-    ("files", "Files", Icon.FOLDER, (255, 196, 0, 255), "File Explorer"),
+    ("files", "Files", Icon.FOLDER, (255, 196, 0, 255), "Folders · drives"),
     ("apps", "Apps", Icon.APPS, (175, 82, 222, 255), "PC programs"),
     ("add_window", "Add window", Icon.ADD, (52, 199, 89, 255), "An open window"),
     ("settings", "Settings", Icon.SETTINGS, (99, 99, 110, 255), "Eyes · privacy"),

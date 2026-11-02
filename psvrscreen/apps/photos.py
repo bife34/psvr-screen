@@ -27,10 +27,11 @@ def _kind(path, image=None):
 class PhotosPage(Library):
     TITLE, ICON, EMPTY = "Photos", Icon.PHOTO, "No pictures here"
     RECENT_HINT = "The newest pictures in Pictures, Desktop and Downloads"
+    BACK_LABEL = "All photos"
 
     def __init__(self, host):
         super().__init__(host)
-        self.viewing = None           # index into self.items while a picture is open
+        self.viewing = None           # index into self.pictures() while a picture is open
         self.big = None               # (path, its picture at viewer size)
 
     # -- the library's choices -----------------------------------------------------------------------------
@@ -41,7 +42,7 @@ class PhotosPage(Library):
         return files.folder_entries(path, files.PICTURE_EXTENSIONS)
 
     def open(self, path):
-        self.viewing = self.items.index(path)
+        self.viewing = self.pictures().index(path)
         self._load_big(path)
 
     def menu(self, path):
@@ -55,6 +56,10 @@ class PhotosPage(Library):
         super().go(place)
 
     # -- the viewer ------------------------------------------------------------------------------------------
+    def pictures(self):
+        """What previous / next go through: the place's pictures."""
+        return [p for p in self.items if p.suffix.lower() in files.PICTURE_EXTENSIONS]
+
     def _load_big(self, path):
         def load():
             try:
@@ -70,9 +75,10 @@ class PhotosPage(Library):
         threading.Thread(target=load, daemon=True, name="photo-view").start()
 
     def _step(self, step):
-        if self.items:
-            self.viewing = (self.viewing + step) % len(self.items)
-            self._load_big(self.items[self.viewing])
+        pictures = self.pictures()
+        if pictures:
+            self.viewing = (self.viewing + step) % len(pictures)
+            self._load_big(pictures[self.viewing])
 
     def _close(self):
         self.viewing, self.big = None, None
@@ -82,17 +88,18 @@ class PhotosPage(Library):
         return super().state() + (self.viewing, str(big))
 
     def build(self):
-        if self.viewing is None or self.viewing >= len(self.items):
+        pictures = self.pictures()
+        if self.viewing is None or self.viewing >= len(pictures):
             return super().build()
-        path = self.items[self.viewing]
+        path = pictures[self.viewing]
         image = self.big[1] if self.big and self.big[0] == path else None
         w, h = PAGE_WIDTH - 64, theme.ROW
         picture_h = ROWS * CARD_H + (ROWS - 1) * theme.GAP * 2 + h
         name = path.name if not self._private() else "Photo"
-        header = Row([Button("back", "All photos", Icon.BACK, h=h, style="normal", size=theme.TEXT - 6,
+        header = Row([Button("back", self.BACK_LABEL, Icon.BACK, h=h, style="normal", size=theme.TEXT - 6,
                              on_click=self._close),
                       Label(name, size=theme.TEXT - 4, flex=1, h=h, indent=16),
-                      Label(f"{self.viewing + 1} / {len(self.items)}", size=theme.SMALL, color=theme.MUTED, h=h)],
+                      Label(f"{self.viewing + 1} / {len(pictures)}", size=theme.SMALL, color=theme.MUTED, h=h)],
                      w=w, h=int(h * 1.4), gap=12)
         footer = Row([Button("prev", "Previous", Icon.PREVIOUS, h=h, style="normal", size=theme.TEXT - 6,
                              on_click=lambda: self._step(-1)),

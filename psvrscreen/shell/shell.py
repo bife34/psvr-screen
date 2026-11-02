@@ -7,13 +7,14 @@ brings everything up to date and returns the surfaces to draw; `overlay()` adds 
 after the pointer has handled this frame's input. Render thread only, except where noted.
 """
 import math
-import subprocess
+import os
 import threading
 import time
 
 from .. import apps
 from ..apps.desktop import new_panel_for
 from ..core import geometry
+from ..core.log import log_error
 from ..core.settings import new_panel, shown_title
 from ..scene.surface import INTERFACE, OVERLAY, Surface
 from ..ui.theme import Icon
@@ -68,6 +69,14 @@ class AppHost:
     def video_file_menu(self, path):
         """Right click on a video file: how to play it."""
         self._shell.video_file_menu(path)
+
+    def open_file(self, path):
+        """Open a file (or folder) in its Windows app; the app's window comes into VR."""
+        self._shell.open_file(path)
+
+    def file_menu(self, path):
+        """Right click on a file in Files."""
+        self._shell.file_menu(path)
 
 
 class _Window:
@@ -437,9 +446,6 @@ class Shell:
         self._close_dialog()
         if key in apps.NATIVE_APPS:
             self.open_native(key)
-        elif key == "files":
-            self._launched_at = time.monotonic()   # its window comes into VR (see _adopt_new_windows)
-            subprocess.Popen(["explorer.exe"])
         elif key == "settings":
             self.dock_action("global_settings")
         else:
@@ -592,6 +598,25 @@ class Shell:
             ("Play as fisheye  3D side by side", Icon.PLAY, play("fisheye", "side_by_side"), "flat"),
             ("Play on a screen (flat)", Icon.PLAY, play("screen", "mono"), "flat"),
             ("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat")])
+
+    def open_file(self, path):
+        self._close_dialog()
+        self._launched_at = time.monotonic()   # its window comes into VR (see _adopt_new_windows)
+        try:
+            os.startfile(str(path))
+        except OSError:
+            log_error(f"open {path.name}")
+
+    def file_menu(self, path):
+        """A file in Files: videos get the play menu; anything else opens in its Windows app."""
+        if path.suffix.lower() in files.EXTENSIONS:
+            self.video_file_menu(path)
+            return
+        items = [("Open", Icon.FILE, lambda: self.open_file(path), "flat")]
+        if path.suffix.lower() in files.PICTURE_EXTENSIONS:
+            items.append(("View around me", Icon.SPHERE, lambda: self.watch_photo(path), "flat"))
+        items.append(("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat"))
+        self.open_menu(shown_title(path.name, private=self._settings.private_mode), items)
 
     def video_menu(self):
         video = self.video

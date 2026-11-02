@@ -68,6 +68,7 @@ goes back to the main screen until the next session.
 | Video files on the PC                    | `video/files.py`              |
 | Videos app (library grid: Recent, drives) | `apps/videos.py` (Library)   |
 | Photos app (grid, viewer, 360° photos)   | `apps/photos.py`              |
+| Files app (folders, drives, any file)    | `apps/files.py`               |
 | Thumbnails (background, disk cache)      | `video/thumbs.py`             |
 | Home launcher                            | `shell/home.py`               |
 | Design: colors, fonts, icons, shapes     | `ui/theme.py` (dark glass, Windows 11 font + icons) |

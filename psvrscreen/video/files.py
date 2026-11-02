@@ -12,6 +12,7 @@ EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi"}
 PICTURE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 SEARCH_DEPTH = 2                 # folders inside the searched folders that are looked into
 MAX_FILES = 300
+HIDDEN_OR_SYSTEM = 0x2 | 0x4     # FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
 
 
 def folders(names=("Downloads", "Videos", "Desktop", "Transferências", "Vídeos", "Ambiente de Trabalho")):
@@ -80,16 +81,18 @@ def drives():
 
 
 def folder_entries(folder, extensions=EXTENSIONS):
-    """(sub-folders, video files - or `extensions`) of a folder, both sorted by name; hidden / system folders
-    left out."""
+    """(sub-folders, video files - or `extensions`, None: all files) of a folder, both sorted by name; hidden /
+    system folders and files left out."""
     dirs, videos = [], []
     try:
         with os.scandir(folder) as it:
             for entry in it:
                 try:
+                    if getattr(entry.stat(), "st_file_attributes", 0) & HIDDEN_OR_SYSTEM:
+                        continue
                     if entry.is_dir() and not entry.name.startswith((".", "$")):
                         dirs.append(Path(entry.path))
-                    elif entry.is_file() and Path(entry.name).suffix.lower() in extensions:
+                    elif entry.is_file() and (extensions is None or Path(entry.name).suffix.lower() in extensions):
                         videos.append(Path(entry.path))
                 except OSError:
                     continue
@@ -165,3 +168,9 @@ def probe_photo(path):
     h, w = gray.shape
     projection = layout.projection or ("equi" if 1.9 < w / h < 2.1 else "screen")
     return VideoInfo(str(path), path.stem, projection, stereo, source="photo", video_url=str(path), fov=layout.fov)
+
+
+def home_folders():
+    """Your main folders that exist: Desktop, Downloads, Documents, Pictures, Videos, Music (also OneDrive's)."""
+    return folders(("Desktop", "Ambiente de Trabalho", "Downloads", "Transferências", "Documents", "Documentos",
+                    "Pictures", "Imagens", "Videos", "Vídeos", "Music", "Música"))
