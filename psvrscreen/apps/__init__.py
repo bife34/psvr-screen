@@ -5,11 +5,9 @@ A window's saved `source` says which app shows it: "window" (a Windows app), "ma
 To add a native app: write apps/<name>.py with a Content subclass and register it below.
 """
 from .desktop import DesktopWindow
-from .files import FilesApp
+from .files import FilesApp, PhotosApp, VideosApp
 from .games import GamesApp
 from .monitor import MonitorView
-from .photos import PhotosApp
-from .videos import VideosApp
 from ..ui.theme import Icon
 
 NATIVE_APPS = {   # name -> (title, icon, Content class)

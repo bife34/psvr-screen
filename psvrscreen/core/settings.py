@@ -21,8 +21,10 @@ SHORTCUT_ACTIONS = {
     "zoom": "Zoom lens on the window under the pointer",
     "recenter": "Recenter everything in front of me",
     "private": "Private mode on / off (hides what you watch)",
+    "listen": "Talk (one voice command)",
 }
-DEFAULT_SHORTCUTS = {"mouse_vr": "Ctrl+Alt+P", "zoom": "Ctrl+Alt+Z", "recenter": "Ctrl+Alt+R", "private": "Ctrl+Alt+H"}
+DEFAULT_SHORTCUTS = {"mouse_vr": "Ctrl+Alt+P", "zoom": "Ctrl+Alt+Z", "recenter": "Ctrl+Alt+R", "private": "Ctrl+Alt+H",
+                     "listen": "Ctrl+Alt+V"}
 APP_NAMES = {"chrome.exe": "Chrome", "msedge.exe": "Edge", "firefox.exe": "Firefox", "brave.exe": "Brave",
              "opera.exe": "Opera", "vivaldi.exe": "Vivaldi", "explorer.exe": "File Explorer", "vlc.exe": "VLC",
              "code.exe": "VS Code"}
@@ -66,6 +68,8 @@ class Settings:
     panels: list = field(default_factory=list)   # dicts: source ("main"/"vr"/"window"), title, exe + PANEL_KEYS
     selected: int = 0
     auto_add_windows: bool = True   # while you wear the headset, newly opened app windows go into VR
+    windows_apps: bool = False      # Windows programs in VR (Apps, Add window, opened files' windows): off
+                                    # until each one is made to work with the system, one by one
     sharp_text: bool = True     # big round text: VR monitor at 2560x1440 225%, windows sized for the headset
     shortcuts: dict = field(default_factory=lambda: dict(DEFAULT_SHORTCUTS))   # action -> "Ctrl+Alt+P"
     curve_version: int = 4
@@ -111,6 +115,7 @@ class Settings:
     environment: str = ""                # a scene's name ("" = the dark room)
     environment_brightness: float = 0.75 # dimmer: windows stand out more
     environment_turn: float = 0.0        # degrees the scene is turned around you
+    scene_grab: bool = False             # dragging empty space turns the surroundings (dizzying: off)
     # VR videos
     private_mode: bool = False           # hide what you watch: titles become app names / "Video", no history
     video_screen_degrees: float = 60.0   # "screen" videos: how wide the screen looks
@@ -130,6 +135,39 @@ class Settings:
     video_size: float = 1.0              # 180° / 360° videos: bigger / smaller around you (1 = as filmed)
     video_brightness: float = 1.0
     video_volume: float = 1.0
+    # The photo wall: a folder's pictures around you (shell/photo_wall.py)
+    wall_shape: str = "sphere"           # "sphere" (rows follow a ball), "ring" (a round wall) or "flat"
+    wall_rows: int = 3
+    wall_tower_height: int = 10          # tower: pictures stacked in each column
+    wall_shape_rows: dict = field(default_factory=dict)   # each wall shape's own rows (photo_wall.SHAPE_ROWS)
+    wall_size: float = 0.45              # a picture's height, m
+    wall_distance: float = 2.2           # m from your eyes
+    wall_space: float = 5.0              # galaxy: m most of its pictures lie within (how big the space is)
+    wall_gap: float = 0.15               # the space between pictures, part of their height
+    wall_tilt: float = 0.0               # the whole wall turned up (+) / down (-), degrees
+    wall_order: str = "name"             # "name", "newest" or "shuffle"
+    wall_show: str = "all"               # "all", "photos" or "videos"
+    wall_hover_zoom: float = 1.5         # a picture you point at grows this much
+    wall_previews: bool = True           # a video you point at plays
+    wall_preview_sound: bool = False     # ...with its sound (muted to start with)
+    wall_per_page: int = 48              # pictures on the wall at once, the rest on next pages (0 = all)
+    wall_live: bool = False              # live wall: its videos play slowly, the one you point / look at for real
+    wall_look_pick: bool = False         # look at a picture for a moment to open it
+    wall_background: str = "black"       # behind the photo wall: "black", "mine" (your surroundings) or "stars"
+    memory_rooms: list = field(default_factory=list)   # saved walls: folder, search, shape, settings, surroundings
+    voice_control: bool = True           # spoken commands (offline speech recognition)
+    files_view: str = "grid"             # Files: "grid" (cards) or "list"
+    files_sort: str = "name"             # Files: "name", "date", "size" or "kind"
+    pinned_folders: list = field(default_factory=list)   # Files: folders pinned to Places
+    rooms: list = field(default_factory=list)   # your rooms (shell/rooms.py): {id, name, panels, ...}
+    current_room: str = "home"
+    smart_assistant: bool = True         # what isn't a plain command goes to the local AI (2.8 GB, once)
+    talk_button: str = "r1"              # the DS4 button that opens the microphone: none / r1 / square / l3 / r3
+    # Photos shown around you, made 3D by the AI (ai/depth.py)
+    photo_depth: str = "off"             # "off", "3d" (the picture gets depth) or "inside" (you stand in it)
+    photo_living: bool = False           # it moves gently (a slow 3D camera drift, far parts sway)
+    photo_depth_amount: float = 1.0      # how deep (1 = natural)
+    video_ai_depth: bool = False         # flat 2D videos on a screen: made 3D by the AI while they play
 
 
 # Slider limits, also used by the gamepad so both stay in range.
@@ -169,6 +207,15 @@ LIMITS = {
     "video_place_up": (-0.9, 0.9),
     "video_brightness": (0.5, 1.5),
     "video_volume": (0.0, 1.5),
+    "wall_rows": (1, 20),
+    "wall_tower_height": (2, 60),
+    "wall_size": (0.05, 100.0),
+    "wall_hover_zoom": (1.0, 4.0),
+    "photo_depth_amount": (0.0, 2.0),
+    "wall_distance": (0.3, 500.0),
+    "wall_space": (1.0, 1000.0),
+    "wall_gap": (0.0, 1.0),
+    "wall_tilt": (-60.0, 60.0),
     "environment_brightness": (0.15, 1.3),
     "picture_smoothing": (-0.6, 1.2),
     "dock_distance": (0.5, 5.0),
@@ -272,6 +319,8 @@ class SettingsStore:
         return cls(settings)
 
     def _mirror_selected(self):
+        if not self._settings.panels:   # (an empty room)
+            return
         panel = self._settings.panels[self._settings.selected]
         for key in PANEL_KEYS:
             panel.setdefault(key, getattr(Settings(), key))
@@ -367,6 +416,11 @@ class SettingsStore:
             self.version += 1
             return removed
 
+    before_save = None   # data -> data (shell/rooms.py: a locked room never reaches this file)
+
     def save(self):
+        data = asdict(self.get())
+        if self.before_save is not None:
+            data = self.before_save(data)
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(asdict(self.get()), f, indent=2)
+            json.dump(data, f, indent=2)

@@ -60,6 +60,8 @@ class Icon:
     VIDEO = ""
     HOME, PHOTO, GLOBE, EYE, PRIVATE = "", "", "", "", ""
     INFO, CLOCK, GAMEPAD, KEYBOARD, CHEVRON = "", "", "", "", ""
+    VOLUME, MUTE, GALLERY, SHUFFLE = "", "", "", ""
+    MIC, POWER = "", ""
     SPHERE, DRIVE, STAR, HISTORY = "", "", "", ""
 
 

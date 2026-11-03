@@ -11,3 +11,5 @@ Tonemapped JPG versions, shrunk to 4096x2048.
   Sunset field          kloppenheim_06         https://polyhaven.com/a/kloppenheim_06
 
 Add your own: put any 360° picture (twice as wide as tall) in this folder - its file name is its name.
+
+Deep space.jpg - made by PSVR Screen (tools/make_deep_space.py), CC0 / public domain.

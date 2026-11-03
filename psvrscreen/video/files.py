@@ -5,6 +5,7 @@ Downloading is the usual way to watch videos from sites that don't let other pla
 import os
 from pathlib import Path
 
+from ..core.cryptomator import VaultPath
 from . import recognize
 from .info import VideoInfo, look_at_frames
 
@@ -48,21 +49,39 @@ def list_videos(extensions=EXTENSIONS, roots=None):
     return videos[:MAX_FILES]
 
 
+def in_vault(path):
+    return isinstance(path, VaultPath)
+
+
+def source(path):
+    """What Pillow / PyAV open: the file's path - or, for a file in a locked room's safe, a new file object that
+    decrypts it as it's read (nothing readable is written anywhere)."""
+    return path.vault.open(path) if in_vault(path) else str(path)
+
+
+def as_path(place):
+    """A place as a path object (a safe's places stay what they are)."""
+    return place if in_vault(place) else Path(place)
+
+
 def probe(path):
     """VideoInfo for a video file (always: an ordinary video plays on the screen). Reads a few frames."""
     import av
-    with av.open(str(path)) as container:
+    with av.open(source(path)) as container:
         duration = float(container.duration or 0) / 1_000_000
         has_sound = bool(container.streams.audio)
     tags = recognize.from_tags(path.stem)
     try:
-        layout = tags.merged(look_at_frames(str(path), duration))
+        layout = tags.merged(look_at_frames(source(path), duration))
     except Exception:
         layout = tags
     stereo = layout.stereo or "mono"
     projection = layout.projection or "screen"
-    return VideoInfo(str(path), path.stem, projection, stereo, video_url=str(path),
+    info = VideoInfo(str(path), path.stem, projection, stereo, video_url=str(path),
                      audio_url=str(path) if has_sound else None, duration=duration, fov=layout.fov)
+    if in_vault(path):
+        info.opener = lambda: source(path)
+    return info
 
 
 def show_in_folder(path):
@@ -82,8 +101,15 @@ def drives():
 
 def folder_entries(folder, extensions=EXTENSIONS):
     """(sub-folders, video files - or `extensions`, None: all files) of a folder, both sorted by name; hidden /
-    system folders and files left out."""
+    system folders and files left out. A locked room's safe too."""
     dirs, videos = [], []
+    if in_vault(folder):
+        for entry in folder.vault.listdir(folder):
+            if entry.is_dir():
+                dirs.append(entry.path)
+            elif extensions is None or entry.path.suffix.lower() in extensions:
+                videos.append(entry.path)
+        return dirs, videos
     try:
         with os.scandir(folder) as it:
             for entry in it:
@@ -159,15 +185,18 @@ def probe_photo(path):
     """VideoInfo for a picture shown around you: 360° if twice as wide as tall, 3D if its halves match."""
     import numpy as np
     from PIL import Image
-    with Image.open(path) as image:
+    with Image.open(source(path)) as image:
         image.draft("L", (2048, 2048))
         gray = np.asarray(image.convert("L"), dtype=np.float32)
     tags = recognize.from_tags(path.stem)
-    stereo = tags.stereo or recognize.stereo_of(recognize.stereo_scores(gray))
+    stereo = tags.stereo or recognize.stereo_of(recognize.stereo_scores(gray), recognize.PHOTO_SAME_PICTURE)
     layout = tags.merged(recognize.from_picture(gray, stereo))
     h, w = gray.shape
     projection = layout.projection or ("equi" if 1.9 < w / h < 2.1 else "screen")
-    return VideoInfo(str(path), path.stem, projection, stereo, source="photo", video_url=str(path), fov=layout.fov)
+    info = VideoInfo(str(path), path.stem, projection, stereo, source="photo", video_url=str(path), fov=layout.fov)
+    if in_vault(path):
+        info.opener = lambda: source(path)
+    return info
 
 
 def home_folders():

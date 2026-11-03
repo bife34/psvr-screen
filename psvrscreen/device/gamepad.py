@@ -22,8 +22,10 @@ from ctypes import wintypes
 from ..win import displays
 
 DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT = 0x0001, 0x0002, 0x0004, 0x0008
-START, BACK, LB = 0x0010, 0x0020, 0x0100
+START, BACK, LB, RB = 0x0010, 0x0020, 0x0100, 0x0200
+L3, R3 = 0x0040, 0x0080
 BTN_A, BTN_B, BTN_X, BTN_Y = 0x1000, 0x2000, 0x4000, 0x8000
+TALK_BUTTONS = {"r1": RB, "square": BTN_X, "l3": L3, "r3": R3}   # settings.talk_button
 
 MOUSEEVENTF_MOVE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x0001, 0x0002, 0x0004
 MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP = 0x0008, 0x0010
@@ -207,6 +209,9 @@ class GamepadMouse(threading.Thread):
             # Screen controls
             if pressed & BTN_Y:
                 self.engine.recenter()
+            talk = TALK_BUTTONS.get(s.talk_button)
+            if talk and pressed & talk and shell is not None:
+                shell.listen()          # press to talk
             l1 = bool(buttons & LB)
             actions = {
                 DPAD_UP: ("height", 0.05) if l1 else ("width", 0.1),

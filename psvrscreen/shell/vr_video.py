@@ -16,20 +16,22 @@ import dataclasses
 import math
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 
 from ..core import geometry
 from ..core.settings import LIMITS, Settings, clamp, shown_title
-from ..render.video_sphere import VideoTexture
+from ..render.video_sphere import DepthTexture, VideoTexture
 from ..scene.surface import INTERFACE, Surface
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Column, Label, Panel, Row, SeekBar, Slider, Spacer, Widget
-from ..video import recognize, sites
+from ..ui.widgets import Button, Column, Label, Panel, Row, SeekBar, Slider, Spacer, Toggle, Widget
+from ..video import files, recognize, sites
 from ..video.player import VideoPlayer
 from ..win.capture import WindowCapture
+from .depth_job import DepthJob
 from .dock import DOCK_DISTANCE, DOCK_HEIGHT, DOCK_TILT
 
 BROWSERS = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"}
@@ -48,6 +50,8 @@ WINDOW_SAME_PICTURE = 0.5          # stricter than for streams: a web page's own
 STEREO_NAMES = {"mono": "2D", "top_bottom": "3D ↕", "side_by_side": "3D ↔"}
 VIDEO_DEFAULTS = {f.name: f.default for f in dataclasses.fields(Settings) if f.name.startswith("video_")}
 DOME_MAP_PX = 300                  # the dome map in the video settings
+LOOK_PAD_W, LOOK_PAD_H = 340, 170  # 3D photo: the Look-from pad
+VOLUME_WIDTH = 380                 # the volume slider next to the time line
 PLACE_LIMIT = 0.9                  # you can go this far from the middle (part of the radius)
 
 
@@ -192,28 +196,70 @@ class WindowPlayer:
 
 
 class PhotoPlayer:
-    """A picture shown around you (from Photos): one frame, nothing to play."""
+    """A picture shown around you (from Photos): one frame - or, for an animated GIF / WebP / PNG, its frames
+    played over and over at their own speed."""
     duration, position, ended, error, paused, volume = 0.0, 0.0, False, None, True, 1.0
+    MAX_FRAMES = 1000
+    MAX_BYTES = 600 * 1024 * 1024        # animations bigger than this play only their first part
 
     def __init__(self, path):
         self._image, self._sent = None, False
+        self._frames, self._times = [], []      # animated: BGRA frames, and when each one ends (s)
+        self._start, self._shown = None, -1
         threading.Thread(target=self._load, args=(path,), daemon=True, name="photo").start()
+
+    @staticmethod
+    def _bgra(image):
+        rgba = np.asarray(image.convert("RGBA"))
+        return np.ascontiguousarray(rgba[..., [2, 1, 0, 3]])   # BGRA, like a window's picture
 
     def _load(self, path):
         from PIL import Image
         try:
-            with Image.open(path) as image:
+            with Image.open(path() if callable(path) else path) as image:   # (a safe's photo: a function)
+                if getattr(image, "n_frames", 1) > 1:
+                    self._load_frames(image)
+                    return
                 image.draft("RGB", (8192, 8192))
-                rgba = np.asarray(image.convert("RGBA"))
-            self._image = np.ascontiguousarray(rgba[..., [2, 1, 0, 3]])   # BGRA, like a window's picture
+                self._image = self._bgra(image)
         except Exception as e:
             self.error = str(e)[:80]
+
+    def _load_frames(self, image):
+        frames, times, end, size = [], [], 0.0, 0
+        for i in range(min(image.n_frames, self.MAX_FRAMES)):
+            image.seek(i)
+            frame = self._bgra(image)
+            end += max(0.02, image.info.get("duration", 100) / 1000.0)   # browsers play 0 ms frames at ~10-20 ms
+            frames.append(frame)
+            times.append(end)
+            size += frame.nbytes
+            if i == 0:
+                self._image = frame         # shown while the rest loads
+            if size > self.MAX_BYTES:
+                break
+        self.duration, self._times = end, times
+        self._frames = frames               # last: now it plays
+
+    @property
+    def animated(self):
+        return len(self._frames) > 1
 
     @property
     def buffering(self):
         return self._image is None and self.error is None
 
     def frame(self):
+        if self.animated:
+            now = time.monotonic()
+            if self._start is None:
+                self._start = now
+            at = (now - self._start) % self.duration
+            i = min(int(np.searchsorted(self._times, at, side="right")), len(self._frames) - 1)
+            if i == self._shown:
+                return None
+            self._shown = i
+            return self._frames[i]
         if self._image is None or self._sent:
             return None
         self._sent = True
@@ -226,7 +272,7 @@ class PhotoPlayer:
         pass
 
     def close(self):
-        self._image = None
+        self._image, self._frames = None, []
 
 
 class ImmersiveVideo:
@@ -239,20 +285,26 @@ class ImmersiveVideo:
         self.fov = info.fov
         self.recognizing = self.window and (info.projection is None or info.stereo is None)
         self.front_yaw = shell.look_yaw          # the video's front is where you looked when it started
+        self.look_from = [0.0, 0.0]              # 3D photo: seen from the side (parts of its distance: right, up)
         if self.photo:
-            self.player = PhotoPlayer(info.video_url)
+            self.player = PhotoPlayer(info.opener or info.video_url)
         elif self.window:
             self.player = WindowPlayer(hwnd, shell.media)
         else:
-            self.player = VideoPlayer(info.video_url, info.audio_url, info.duration, start=info.start,
+            self.player = VideoPlayer(info.opener or info.video_url, info.audio_url and (info.opener or info.audio_url),
+                                      info.duration, start=info.start,
                                       headers=info.headers)
             self.player.volume = shell.settings().video_volume
         self.texture = VideoTexture()
+        self.depth, self.depth_job = DepthTexture(), DepthJob()   # the AI's depth: flat pictures / videos in 3D
+        self._room_state = ""                    # "Make it my room": "", "making", "done", "failed"
         self.controls = Controls(self)
         self.panel = VideoSettings(self)
         self.settings_open = False
         self._pointer_seen = (None, 0.0)         # last pointer direction and when it changed
         self._closed = False
+        self._unmuted = None                     # the volume before Mute
+        self._next_photo = None                  # Previous / Next: the picture's VideoInfo, read in the background
         self.grab = _VideoGrab(self)             # the pointer's target for presses on nothing
         if self.window:
             threading.Thread(target=self._watch_window, daemon=True, name="vr-video-window").start()
@@ -287,6 +339,7 @@ class ImmersiveVideo:
             self.shell.remember_position(self.info, self.projection, self.stereo, self.player.position)
         self.player.close()
         self.texture.delete()
+        self.depth.delete()
         self.controls.release()
         self.panel.release()
 
@@ -296,6 +349,7 @@ class ImmersiveVideo:
     def recenter_here(self):
         """The video's middle goes where you look - left / right and up / down."""
         self.front_yaw = self.shell.look_yaw
+        self.look_from = [0.0, 0.0]
         self.set_value("video_tilt", self.shell.look_pitch)
 
     def straighten(self):
@@ -328,6 +382,85 @@ class ImmersiveVideo:
     def toggle_settings(self):
         self.settings_open = not self.settings_open
 
+    # -- the AI's depth -------------------------------------------------------------------------------
+    def flat(self):
+        """A flat 2D picture / video (only those can be made 3D)."""
+        return self.projection == "screen" and self.stereo == "mono" and not self.window
+
+    def photo_depth_on(self, s):
+        return self.photo and self.flat() and s.photo_depth != "off"
+
+    def ai_depth_on(self, s):
+        return not self.photo and self.flat() and s.video_ai_depth
+
+    def set_photo_depth(self, mode):
+        self.set_value("photo_depth", mode)
+
+    def toggle_living(self):
+        s = self.shell.settings()
+        self.set_value("photo_living", not s.photo_living)
+        if s.photo_depth == "off":
+            self.set_value("photo_depth", "3d")    # living needs depth
+
+    def make_room(self):
+        """This photo becomes the surroundings (Settings > Surroundings keeps it)."""
+        if self._room_state == "making":
+            return
+        self._room_state = "making"
+        path, projection = self.info.video_url, self.projection
+
+        def work():
+            from ..video import room_maker
+            try:
+                name = room_maker.make(path, projection)
+                self.shell.store.update(environment=name, environment_turn=0.0)
+                self._room_state = "done"
+                self.shell.toast("Your photo is now the room around you (Settings > Surroundings)")
+            except Exception:
+                from ..core.log import log_error
+                log_error("make room")
+                self._room_state = "failed"
+
+        threading.Thread(target=work, daemon=True, name="make-room").start()
+
+    def depth_status(self):
+        state = self.depth_job.state
+        return {"downloading": "AI: getting the depth model...", "working": "AI: seeing the depth...",
+                "failed": "AI depth didn't work (see psvr-screen.log)"}.get(state, "")
+
+    def toggle_mute(self):
+        volume = self.shell.settings().video_volume
+        if volume > 0:
+            self._unmuted = volume
+            self.set_value("video_volume", 0.0)
+        else:
+            self.set_value("video_volume", self._unmuted or VIDEO_DEFAULTS["video_volume"])
+
+    def album_place(self):
+        """(index, count) of the picture in the pictures Previous / Next go through, or None."""
+        album = self.info.album
+        if not self.photo or len(album) < 2 or self.info.video_url not in album:
+            return None
+        return album.index(self.info.video_url), len(album)
+
+    def step_photo(self, step):
+        """Previous / next picture, read in the background and shown where this one is."""
+        place = self.album_place()
+        if place is None:
+            return
+        album = self.info.album
+        path = album[(place[0] + step) % len(album)]
+
+        def read():
+            try:
+                info = files.probe_photo(Path(path))
+            except Exception:
+                return
+            info.album = album
+            self._next_photo = info
+
+        threading.Thread(target=read, daemon=True, name="photo-step").start()
+
     def set_value(self, key, value):
         """A video setting (saved: the next video starts with it too)."""
         self.shell.store.update(**{key: clamp(key, value) if key in LIMITS else value})
@@ -350,25 +483,50 @@ class ImmersiveVideo:
 
     # -- every frame ---------------------------------------------------------------------------------
     def surfaces(self, now):
+        if self._next_photo is not None:   # the next picture is read: show it (same place around you)
+            info, self._next_photo = self._next_photo, None
+            self.player.close()
+            self.info, self.player = info, PhotoPlayer(info.opener or info.video_url)
+            self.projection, self.stereo, self.fov = info.projection or "screen", info.stereo or "mono", info.fov
+            self.depth_job.reset()
+            self.depth.size = None
+            self._room_state = ""
+        s = self.shell.settings()
         frame = self.player.frame()
         if frame is not None:
             if self.window or self.photo:
                 self.texture.upload_bgra(frame)
             else:
                 self.texture.upload(frame)
-        s = self.shell.settings()
+                if self.ai_depth_on(s):
+                    self.depth_job.video_frame(frame)
+        if self.photo and self.photo_depth_on(s) and self.player._image is not None:
+            self.depth_job.photo(self.info.video_url, self.player._image,
+                                 s.private_mode or self.info.opener is not None)   # (a safe's photo: nothing on disk)
+        made = self.depth_job.result()
+        if made is not None:
+            self.depth.upload(made)
+        depth_shown = (self.photo and self.photo_depth_on(s)) or (not self.photo and self.ai_depth_on(s))
+        projection = self.projection
+        if self.photo and s.photo_depth == "inside" and self.photo_depth_on(s):
+            projection = "inside"
         front = geometry.rotate_y(-self.front_yaw)
         turned = front @ geometry.rotate_x(s.video_tilt) @ geometry.rotate_z(-s.video_roll)
         out = [Surface("video", turned, 1, 1, texture=self.texture, shape="sphere",   # centered between your eyes
-                       data={"projection": self.projection, "stereo": self.stereo, "distance": s.video_distance,
+                       data={"projection": projection, "stereo": self.stereo, "distance": s.video_distance,
                              "screen_degrees": s.video_screen_degrees, "screen_curve": s.video_screen_curve,
                              "size": s.video_size, "brightness": s.video_brightness,
                              "contrast": s.video_contrast, "saturation": s.video_saturation,
-                             "ipd": s.video_ipd if self.stereo != "mono" else 0.0,
-                             "eye_height": s.video_eye_height if self.stereo != "mono" else 0.0,
+                             "ipd": s.video_ipd if self.stereo != "mono" or depth_shown else 0.0,
+                             "eye_height": s.video_eye_height if self.stereo != "mono" or depth_shown else 0.0,
                              "move_away": s.video_move_away,
                              "place": (s.video_place_right, s.video_place_up, s.video_place_forward),
-                             "fov": self.fov, "crop": getattr(self.player, "crop", (0.0, 0.0, 1.0, 1.0))})]
+                             "fov": self.fov, "crop": getattr(self.player, "crop", (0.0, 0.0, 1.0, 1.0)),
+                             "depth": self.depth if depth_shown else None,
+                             "depth_amount": s.photo_depth_amount, "time": now, "ipd_m": s.ipd,
+                             "living": self.photo and s.photo_living and depth_shown,
+                             "look_from": tuple(c * s.video_distance for c in self.look_from)   # (m)
+                             if depth_shown else (0.0, 0.0)})]
         if self._controls_visible(now):
             self.controls.refresh()
             model = front @ geometry.translate(0, DOCK_HEIGHT, -DOCK_DISTANCE) @ geometry.tilt(DOCK_TILT)
@@ -396,8 +554,12 @@ class ImmersiveVideo:
                 or now - self._pointer_seen[1] < CONTROLS_SECONDS)
 
 
+LOOK_AROUND_PER_DEGREE = 0.006    # 3D photo: your eyes seem to move this part of its distance per degree dragged
+LOOK_AROUND_MAX = 0.15            # ...at most this part of the distance to a side (farther shows the gaps behind)
+
 class _VideoGrab:
-    """Left button on empty space + drag: the video follows the pointer (turns left / right, tilts up / down)."""
+    """Left button on empty space + drag: the video follows the pointer (turns left / right, tilts up / down).
+    A 3D photo (made 3D by the AI, on a screen): drag to look at it from the side - as if you stepped there."""
 
     def __init__(self, video):
         self.video = video
@@ -405,9 +567,17 @@ class _VideoGrab:
 
     def on_pointer(self, e):
         v = self.video
+        s = v.shell.settings()
+        look_around = v.photo and v.projection == "screen" and v.photo_depth_on(s) and s.photo_depth == "3d"
         if e.kind == "press" and e.button == "left":
-            self._start = (v.front_yaw, v.shell.settings().video_tilt)
+            self._start = tuple(v.look_from) if look_around else (v.front_yaw, s.video_tilt)
         elif e.kind == "drag" and self._start is not None:
+            if look_around:
+                x0, y0 = self._start
+                step = LOOK_AROUND_PER_DEGREE
+                v.look_from = [max(-LOOK_AROUND_MAX, min(LOOK_AROUND_MAX, x0 - (e.yaw - e.start_yaw) * step)),
+                               max(-LOOK_AROUND_MAX, min(LOOK_AROUND_MAX, y0 - (e.pitch - e.start_pitch) * step))]
+                return
             yaw0, tilt0 = self._start
             v.front_yaw = yaw0 + (e.yaw - e.start_yaw)
             v.set_value("video_tilt", tilt0 + (e.pitch - e.start_pitch))
@@ -432,7 +602,11 @@ class Controls(View):
     def state(self):
         v, p = self.video, self.video.player
         return (int(p.position), p.paused, p.ended, p.buffering, p.error, v.settings_open, v.recognizing,
-                v.projection, v.stereo, v.shell.settings().private_mode, self.ctx.drag_start)
+                v.projection, v.stereo, v.shell.settings().private_mode, self.ctx.drag_start,
+                v.shell.settings().video_volume, v.info.video_url if v.photo else None,
+                v.shell.settings().photo_depth, v.shell.settings().photo_living, v._room_state, v.depth_status(),
+                v.shell.settings().voice_control, v.shell.voice is not None and v.shell.voice.listening,
+                tuple(round(c, 3) for c in v.look_from))
 
     def build(self):
         v, p = self.video, self.video.player
@@ -454,8 +628,10 @@ class Controls(View):
                           on_click=action)
 
         if v.photo:
-            progress = Label("Photo  ·  drag empty space to look around it", size=theme.SMALL - 4, color=theme.MUTED,
-                             w=CONTROLS_WIDTH, h=theme.ROW, align="center")
+            progress = self._photo_row()
+            s = v.shell.settings()
+            if v.photo_depth_on(s) and s.photo_depth == "3d":   # 3D: where you look at it from
+                progress = Column([progress, self._look_row()], gap=8)
         elif v.window:   # the browser plays it: jump around there
             progress = Label("From the browser window - put the video in full screen there for the best picture",
                              size=theme.SMALL - 4, color=theme.MUTED, w=CONTROLS_WIDTH, h=theme.ROW, align="center")
@@ -465,7 +641,8 @@ class Controls(View):
                             SeekBar("seek", position / duration if duration else 0.0, v.seek_fraction, h=theme.ROW,
                                     flex=1),
                             Label(_time(duration) if duration else "live", size=theme.SMALL, color=theme.MUTED,
-                                  w=150, h=theme.ROW)],
+                                  w=150, h=theme.ROW),
+                            *self._volume()],
                            w=CONTROLS_WIDTH, h=theme.ROW, gap=8)
         title = shown_title(v.info.title, private=v.shell.settings().private_mode)
         about = Column([Label(title, size=theme.SMALL, h=int(theme.ROW * 0.8), w=SIDE_WIDTH, indent=16),
@@ -473,7 +650,12 @@ class Controls(View):
                               indent=16)], w=SIDE_WIDTH, h=h)
         play = Button("play", icon=Icon.PAUSE if playing else Icon.PLAY, w=h + 14, h=h + 14, style="primary",
                       size=theme.TEXT, on_click=v.play_pause)
-        if v.photo:
+        album = v.album_place()
+        if album is not None:   # a picture from Photos: previous / next of its folder (or photo wall)
+            center = Row([button("previous", icon=Icon.PREVIOUS, action=lambda: v.step_photo(-1), w=h + 30),
+                          Label(f"{album[0] + 1} / {album[1]}", size=theme.TEXT - 4, w=190, h=h, align="center"),
+                          button("next", icon=Icon.NEXT, action=lambda: v.step_photo(1), w=h + 30)], gap=6, h=h + 14)
+        elif v.photo:
             center = Spacer(w=h)
         elif v.window:
             center = Row([play], h=h + 14)
@@ -481,7 +663,10 @@ class Controls(View):
             center = Row([button("back", f"−{SKIP_SECONDS}s", action=lambda: v.skip(-SKIP_SECONDS), w=150), play,
                           button("forward", f"+{SKIP_SECONDS}s", action=lambda: v.skip(SKIP_SECONDS), w=150)],
                          gap=18, h=h + 14)
-        right = Row([Spacer(flex=1),
+        listening = v.shell.voice is not None and v.shell.voice.listening
+        talk = ([button("talk", icon=Icon.MIC, action=v.shell.listen, selected=listening, w=h + 10)]
+                if v.shell.settings().voice_control else [])
+        right = Row([Spacer(flex=1), *talk,
                      button("settings", icon=Icon.SETTINGS, action=v.toggle_settings, selected=v.settings_open,
                             w=h + 10),
                      button("recenter", icon=Icon.RECENTER, action=v.recenter_here, w=h + 10),
@@ -490,6 +675,55 @@ class Controls(View):
                     w=SIDE_WIDTH, h=h, gap=6)
         buttons = Row([about, Spacer(flex=1), center, Spacer(flex=1), right], w=CONTROLS_WIDTH, h=h + 14)
         return Panel([progress, buttons], pad=20, gap=6)
+
+    def _photo_row(self):
+        """A photo: make it 3D, step inside it, let it live, make it the room."""
+        v, s = self.video, self.video.shell.settings()
+        small = theme.ROW
+
+        def chip(key, text, icon, action, selected=False):
+            return Button(key, text, icon, h=small, style="flat", selected=selected, size=theme.TEXT - 8,
+                          on_click=action)
+
+        room = {"making": "Making the room...", "done": "It's your room now"}.get(v._room_state, "Make it my room")
+        items = []
+        if v.flat():
+            items += [chip("depth:off", "Flat", Icon.PHOTO, lambda: v.set_photo_depth("off"), s.photo_depth == "off"),
+                      chip("depth:3d", "3D", Icon.SPHERE, lambda: v.set_photo_depth("3d"), s.photo_depth == "3d"),
+                      chip("depth:inside", "Step inside", Icon.EYE, lambda: v.set_photo_depth("inside"),
+                           s.photo_depth == "inside"),
+                      chip("living", "Living", Icon.STAR, v.toggle_living, s.photo_living and s.photo_depth != "off"),
+                      Spacer(w=12)]
+        status = v.depth_status() if v.flat() and s.photo_depth != "off" else ""
+        items += [chip("room", room, Icon.HOME, v.make_room, v._room_state == "done"),
+                  Label(status or ("Drag empty space to look around" if not v.flat() else ""), size=theme.SMALL - 8,
+                        color=theme.ACCENT_LIGHT if status else theme.MUTED, h=small, flex=1, indent=12)]
+        return Row(items, w=CONTROLS_WIDTH, h=small, gap=6)
+
+    def _look_row(self):
+        """3D photo: the Look-from pad (press where you want to stand - the middle is straight in front) and Center."""
+        v = self.video
+
+        def pick(right, up):
+            v.look_from = [right * LOOK_AROUND_MAX, up * LOOK_AROUND_MAX]
+
+        x, y = (c / LOOK_AROUND_MAX for c in v.look_from)
+        return Row([Label("Look from", size=theme.SMALL - 4, w=220, h=LOOK_PAD_H, indent=16),
+                    LookPad("look-pad", x, y, pick),
+                    Button("look-center", "Straight on", Icon.RECENTER, h=theme.ROW - 8, style="normal",
+                           size=theme.TEXT - 8, on_click=lambda: pick(0.0, 0.0)),
+                    Label("Or drag the photo", size=theme.SMALL - 8, color=theme.MUTED, h=LOOK_PAD_H, flex=1,
+                          indent=12)], w=CONTROLS_WIDTH, h=LOOK_PAD_H, gap=12)
+
+    def _volume(self):
+        """🔊 (mute / unmute) and a slider - 100% = as recorded, up to 150%."""
+        v = self.video
+        volume = v.shell.settings().video_volume
+        lo, hi = LIMITS["video_volume"]
+        return [Button("mute", icon=Icon.MUTE if volume <= 0 else Icon.VOLUME, w=theme.ROW, h=theme.ROW, style="flat",
+                       size=theme.TEXT - 6, on_click=v.toggle_mute),
+                Slider("volume", "", volume * 100, lo * 100, hi * 100, "{:.0f}%", w=VOLUME_WIDTH, h=theme.ROW,
+                       on_change=lambda value: v.set_value("video_volume", value / 100))]
 
 
 class VideoSettings(View):
@@ -504,7 +738,8 @@ class VideoSettings(View):
 
     def state(self):
         v, s = self.video, self.video.shell.settings()
-        return (v.projection, v.stereo, v.recognizing, self.tab) + tuple(getattr(s, k) for k in VIDEO_DEFAULTS)
+        return ((v.projection, v.stereo, v.recognizing, self.tab, s.photo_depth_amount, s.photo_depth, v.depth_status())
+                + tuple(getattr(s, k) for k in VIDEO_DEFAULTS))
 
     def _show(self, tab):
         self.tab = tab
@@ -555,11 +790,23 @@ class VideoSettings(View):
                          slider("video_screen_curve", "Curve", "{:.0f}%", 100)]
             else:
                 rows += [slider("video_size", "Size (zoom)", "{:.2f}x")]
+            eye_rows = [slider("video_ipd", "IPD (depth)", "{:+.1f}°"),
+                        hint("IPD = how far the 3D feels:  ←  closer, bigger      farther, smaller  →"),
+                        slider("video_eye_height", "Eye height", "{:+.2f}°"),
+                        hint("Eye height: if the 3D looks double up / down, line its eyes up here")]
             if v.stereo != "mono":
-                rows += [slider("video_ipd", "IPD (depth)", "{:+.1f}°"),
-                         hint("IPD = how far the 3D feels:  ←  closer, bigger      farther, smaller  →"),
-                         slider("video_eye_height", "Eye height", "{:+.2f}°"),
-                         hint("Eye height: if this video's 3D looks double up / down, line its eyes up here")]
+                rows += eye_rows
+            elif v.flat() and v.photo:
+                rows += [choices("AI 3D", [("off", "Flat"), ("3d", "3D"), ("inside", "Step inside")],
+                                 s.photo_depth, v.set_photo_depth)]
+                if s.photo_depth != "off":
+                    rows += [slider("photo_depth_amount", "3D depth", "{:.1f}x")] + eye_rows
+            elif v.flat():
+                rows += [Toggle("ai-depth", "AI 3D: make this flat video 3D (experimental)", s.video_ai_depth, w=w,
+                                on_change=lambda value: v.set_value("video_ai_depth", value)),
+                         slider("photo_depth_amount", "3D depth", "{:.1f}x")]
+                rows += eye_rows if s.video_ai_depth else []
+                rows.append(hint(v.depth_status() or "The AI sees the depth of every frame, on this PC - nothing is uploaded"))
             else:
                 rows.append(hint("Eye separation is for 3D videos (3D above)"))
             return Panel(rows, pad=20, gap=4)
@@ -600,6 +847,43 @@ class VideoSettings(View):
                  slider("video_roll", "Roll", "{:+.0f}°"),
                  hint("Roll fixes a crooked horizon  ·  or grab empty space and drag the video")]
         return Panel(rows, pad=20, gap=4)
+
+
+class LookPad(Widget):
+    """Where you look at a 3D photo from: a small pad, the middle = straight in front, the edges = as far to that
+    side as it goes. Press or drag on it: `on_pick(right, up)`, -1..1."""
+    interactive = True
+
+    def __init__(self, key, right, up, on_pick):
+        super().__init__(LOOK_PAD_W, LOOK_PAD_H, key)
+        self.right, self.up, self.on_pick = right, up, on_pick
+
+    def draw(self, d, ctx):
+        x0, y0, x1, y1 = (int(v) for v in self.box)
+        hovered = ctx.hovered(self.key) or ctx.pressed(self.key)
+        d.rounded_rectangle((x0, y0, x1, y1), 18, fill=theme.BUTTON, outline=theme.ACCENT if hovered else theme.TRACK,
+                            width=3)
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        d.line((x0 + 16, cy, x1 - 16, cy), fill=theme.TRACK, width=2)
+        d.line((cx, y0 + 12, cx, y1 - 12), fill=theme.TRACK, width=2)
+        px = cx + self.right * (x1 - x0 - 40) / 2
+        py = cy - self.up * (y1 - y0 - 40) / 2
+        d.ellipse((px - 16, py - 16, px + 16, py + 16), fill=theme.FG, outline=theme.ACCENT, width=5)
+
+    def _pick(self, ctx, e):
+        if e.u is None or not self.on_pick:
+            return
+        x0, y0, x1, y1 = self.box
+        x, y = e.u * ctx.size[0], e.v * ctx.size[1]
+        right = max(-1.0, min(1.0, (x - (x0 + x1) / 2) / ((x1 - x0 - 40) / 2)))
+        up = max(-1.0, min(1.0, ((y0 + y1) / 2 - y) / ((y1 - y0 - 40) / 2)))
+        self.on_pick(right, up)
+
+    def press(self, ctx, e):
+        self._pick(ctx, e)
+
+    def drag(self, ctx, e):
+        self._pick(ctx, e)
 
 
 class DomeMap(Widget):

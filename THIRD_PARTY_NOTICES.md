@@ -27,6 +27,21 @@ following software, each under its own license. Their source code is available f
 | uiautomation | 2.0.29 | Apache-2.0 | https://github.com/yinkaisheng/Python-UIAutomation-for-Windows |
 | comtypes | 1.4.17 | MIT | https://github.com/enthought/comtypes |
 | openvr (pyopenvr) + OpenVR SDK | 2.12.1401 | BSD-3-Clause | https://github.com/cmbruns/pyopenvr |
+| OpenCV (opencv-python) | 5.0 | Apache-2.0 | https://github.com/opencv/opencv-python |
+| ONNX Runtime (onnxruntime-directml) | 1.24.4 | MIT | https://github.com/microsoft/onnxruntime |
+| Hugging Face Tokenizers | 0.23.3 | Apache-2.0 | https://github.com/huggingface/tokenizers |
+| Vosk (speech recognition) | 0.3 | Apache-2.0 | https://github.com/alphacep/vosk-api |
+
+## AI models and data (downloaded on first use to %LOCALAPPDATA%\PSVRScreen\models, run on your PC)
+
+| Model / data | Used for | License | Source |
+|---|---|---|---|
+| CLIP ViT-B/32 (OpenAI; ONNX export by Xenova) | search by words, the memory galaxy | MIT | https://huggingface.co/Xenova/clip-vit-base-patch32 |
+| Depth Anything V2 Small (ONNX by onnx-community) | 2D -> 3D, step inside, living photos | Apache-2.0 | https://huggingface.co/onnx-community/depth-anything-v2-small |
+| YuNet face detection (OpenCV Zoo) | finding faces | MIT | https://huggingface.co/opencv/face_detection_yunet |
+| SFace face recognition (OpenCV Zoo) | telling people apart | Apache-2.0 | https://huggingface.co/opencv/face_recognition_sface |
+| Vosk small English model (Alpha Cephei) | voice commands | Apache-2.0 | https://alphacephei.com/vosk/models |
+| GeoNames cities15000 + countryInfo | GPS -> town names | CC BY 4.0 (GeoNames, https://www.geonames.org) | https://download.geonames.org/export/dump/ |
 
 ## Pictures
 

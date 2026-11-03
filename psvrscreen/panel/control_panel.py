@@ -22,6 +22,7 @@ SCREEN_FILL = "#1f3b63"
 SCREEN_EDGE = "#7db4ff"
 GAZE = "#45d483"
 GAZE_DARK = "#1f7a4a"
+DANGER_BG = "#9b2c2c"
 BAR_BG = "#0e1117"
 TAB_BG = "#1b2029"
 TAB_SELECTED = "#26406a"
@@ -71,8 +72,21 @@ CONTROLS_HELP = (
 )
 
 
+VIEW_NEAREST, VIEW_FARTHEST = 1.5, 3000.0   # m the map's camera can be from you (the VR space goes to 500 m)
+GRID_LINES = 12                             # floor lines each way from you
+
+
+def _grid_step(radius):
+    """Floor line spacing that fits the zoom: 0.5, 1, 2, 5, 10, 20, 50... m."""
+    raw = radius / 8
+    base = 10 ** math.floor(math.log10(raw))
+    return next(base * k for k in (1, 2, 5, 10) if base * k >= raw)
+
+
 class Viewer3D:
-    """Tiny software 3D renderer on a Tk canvas. Coordinates are relative to your eyes: -Z is forward."""
+    """Tiny software 3D renderer on a Tk canvas. Coordinates are relative to your eyes: -Z is forward.
+    The map is as big as your space: it zooms out to kilometres, the floor's lines get wider apart as you zoom
+    (labelled), and double-click fits every window in view."""
 
     def __init__(self, canvas, store):
         self.c = canvas
@@ -89,7 +103,11 @@ class Viewer3D:
         self._hit_polys = []      # (depth, panel index, polygon) from the last draw, for picking
 
     def reset(self):
-        self.yaw, self.pitch, self.radius = math.radians(40), math.radians(22), 4.2
+        """Double-click: everything in view (the farthest window decides how far the camera goes)."""
+        self.yaw, self.pitch = math.radians(40), math.radians(22)
+        panels = [p for p in self.store.get().panels if p.get("shown", True)]
+        far = max((p["distance"] + p["width"] / 2 + abs(p["height"]) for p in panels), default=2.5)
+        self.radius = max(4.2, min(VIEW_FARTHEST, far * 1.7))
 
     def _press(self, e):
         self._last = (e.x, e.y)
@@ -105,8 +123,10 @@ class Viewer3D:
         if self._moving:
             # Drag a window: left / right = around you, up / down = higher / lower
             index, x0, y0, yaw0, height0 = self._moving
+            lo, hi = LIMITS["height"]
+            per_px = 0.006 * self.radius / 4.2     # zoomed out: a pixel is more metres
             self.store.update_panel(index, yaw=max(-170.0, min(170.0, yaw0 + (e.x - x0) * 0.35)),
-                                    height=max(-1.5, min(1.5, height0 - (e.y - y0) * 0.006)))
+                                    height=max(lo, min(hi, height0 - (e.y - y0) * per_px)))
             return
         if self._last:
             dx, dy = e.x - self._last[0], e.y - self._last[1]
@@ -115,7 +135,7 @@ class Viewer3D:
         self._last = (e.x, e.y)
 
     def _wheel(self, e):
-        self.radius = max(1.5, min(12.0, self.radius * (0.9 if e.delta > 0 else 1.1)))
+        self.radius = max(VIEW_NEAREST, min(VIEW_FARTHEST, self.radius * (0.87 if e.delta > 0 else 1.15)))
 
     def _camera(self, target):
         cp, sp = math.cos(self.pitch), math.sin(self.pitch)
@@ -145,23 +165,34 @@ class Viewer3D:
             return (w / 2 + focal * _dot(v, right) / z, h / 2 - focal * _dot(v, up) / z), z
 
         def line(a, b, **kw):
-            pa, _ = project(a)
-            pb, _ = project(b)
-            if pa and pb:
-                c.create_line(*pa, *pb, **kw)
+            pa, za = project(a)
+            pb, zb = project(b)
+            if not (pa and pb):        # a line passing behind the camera (the big floor): cut where it goes
+                if za < 0.05 and zb < 0.05:
+                    return
+                k = (0.06 - za) / (zb - za)          # where the line comes just in front of the camera
+                cut = tuple(x + (y - x) * k for x, y in zip(a, b))
+                pa, pb = (project(cut)[0], pb) if not pa else (pa, project(cut)[0])
+                if not (pa and pb):
+                    return
+            c.create_line(*pa, *pb, **kw)
 
-        # Floor grid
+        # Floor grid, as big as the zoom (its spacing written at the front edge)
         floor = -EYE_HEIGHT
-        for i in range(-6, 7):
-            t = i * 0.5
-            line((t, floor, -3.0), (t, floor, 3.0), fill=GRID)
-            line((-3.0, floor, t), (3.0, floor, t), fill=GRID)
+        step = _grid_step(self.radius)
+        edge = step * GRID_LINES
+        for i in range(-GRID_LINES, GRID_LINES + 1):
+            t = i * step
+            line((t, floor, -edge), (t, floor, edge), fill=GRID)
+            line((-edge, floor, t), (edge, floor, t), fill=GRID)
+        c.create_text(w - 12, 54, text=f"floor squares: {step:g} m", fill=MUTED, anchor="e", font=("Segoe UI", 9))
 
         # Field of view wedge (what the headset can show at once)
         half = math.radians(PSVR_FOV_DEG / 2)
+        reach = max(2.2, self.radius * 0.5)
         for a in (-half, half):
             yaw = look_yaw + a
-            line((0, 0, 0), (-math.sin(yaw) * 2.2, 0, -math.cos(yaw) * 2.2), fill="#2f4a3a", dash=(3, 4))
+            line((0, 0, 0), (-math.sin(yaw) * reach, 0, -math.cos(yaw) * reach), fill="#2f4a3a", dash=(3, 4))
 
         # Panels (curved strips), all quads sorted back to front so nearer panels cover farther ones
         quads, edges, labels = [], [], []
@@ -195,7 +226,8 @@ class Viewer3D:
             r = max(4, focal * 0.11 / max(z, 0.1))
             c.create_oval(head[0] - r, head[1] - r, head[0] + r, head[1] + r, fill="#3a4250", outline=TEXT)
         cp = math.cos(look_pitch)
-        gaze = (-math.sin(look_yaw) * cp * 0.6, math.sin(look_pitch) * 0.6, -math.cos(look_yaw) * cp * 0.6)
+        g = max(0.6, self.radius * 0.12)
+        gaze = (-math.sin(look_yaw) * cp * g, math.sin(look_pitch) * g, -math.cos(look_yaw) * cp * g)
         line((0, 0, 0), gaze, fill=GAZE, width=3, arrow="last")
 
         angle = math.degrees(2 * math.atan(s.width / 2 / max(s.distance, 0.01)))
@@ -203,7 +235,7 @@ class Viewer3D:
         c.create_text(12, 12, anchor="nw", fill=MUTED, font=("Segoe UI", 9),
                       text=f"Windows {mode}. Selected one (blue) fills {angle:.0f} deg of your ~{PSVR_FOV_DEG} deg view.\n"
                            f"Drag a window to move it (left/right = around you, up/down = height).  "
-                           f"Drag empty space to rotate the view, scroll to zoom, double-click to reset.")
+                           f"Drag empty space to rotate the view, scroll to zoom (out to kilometres), double-click: fit everything.")
 
     @staticmethod
     def _place(p, x, y, z):
@@ -268,6 +300,9 @@ class ControlPanel:
         self.mouse_button = self._header_button(header, "", self._toggle_mouse, ACCENT)
         self._header_button(header, "⟲  Recenter", engine.recenter)
         self._header_button(header, "＋  Add window", self._add_menu)
+        # Power, like Windows': restart the app, or turn it off (the VR closes, windows back to the PC screen)
+        self._header_button(header, "⏻  Turn off", lambda: self._power("off"), DANGER_BG, side="right")
+        self._header_button(header, "⟳  Restart", lambda: self._power("restart"), side="right")
         # While SteamVR has the headset: the way back (shown only then)
         self.back_button = tk.Button(header, text="▶  Open in VR again", command=self._back_to_vr, bg="#2e7d32",
                                      fg="white", activebackground="#388e3c", activeforeground="white", bd=0,
@@ -470,10 +505,10 @@ class ControlPanel:
             text=("Could not use: " + ", ".join(problems) + " (another program already uses it)") if problems else "")
 
     # -- header ------------------------------------------------------------------------------
-    def _header_button(self, parent, text, action, bg="#2a3140"):
+    def _header_button(self, parent, text, action, bg="#2a3140", side="left"):
         b = tk.Label(parent, text=text, bg=bg, fg="white", font=("Segoe UI Semibold", 10), cursor="hand2",
                      padx=16, pady=7)
-        b.pack(side="left", padx=4, pady=8)
+        b.pack(side=side, padx=4, pady=8)
         b.bind("<Button-1>", lambda e: action(e) if action == self._add_menu else action())
         return b
 
@@ -482,6 +517,8 @@ class ControlPanel:
         doesn't move here."""
         if mouse_in_vr and self._banner is None:
             b = tk.Toplevel(self.root)
+            b.title("PSVR Screen - mouse banner")   # not "PSVR Screen": closing the app by name must find the panel
+            b.protocol("WM_DELETE_WINDOW", self.close)  # (and a close sent to the banner closes the app too)
             b.overrideredirect(True)
             b.attributes("-topmost", True)
             b.configure(bg=GAZE_DARK)
@@ -543,6 +580,11 @@ class ControlPanel:
                 b.bind("<Enter>", lambda e, b=b: b.config(fg=TEXT))
                 b.bind("<Leave>", lambda e, b=b: b.config(fg=MUTED))
 
+    def _power(self, then):
+        """Restart / Turn off from the control panel: the same as the dock's power menu in VR."""
+        self.quit_request = then
+        self.close()
+
     def _add_menu(self, event):
         s = self.store.get()
         in_vr = {p.get("hwnd") for p in s.panels if p["source"] == "window"}
@@ -602,6 +644,11 @@ class ControlPanel:
             self.back_button.pack_forget()
 
     def _tick(self):
+        shell = getattr(self.engine, "shell", None)
+        if shell is not None and getattr(shell, "quit_request", None):
+            self.quit_request = shell.quit_request
+            self.close()
+            return
         self._show_back_button()
         if self.store.version != self._seen_version:
             self._seen_version = self.store.version
@@ -637,7 +684,10 @@ class ControlPanel:
         self.root.after(33, self._tick)
 
     def run(self):
+        """Until the control panel is closed: returns "restart" if the dock's power menu asked for it."""
+        self.quit_request = None
         self.root.mainloop()
+        return self.quit_request
 
     def close(self):
         self.store.save()

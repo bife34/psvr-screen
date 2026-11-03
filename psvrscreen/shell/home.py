@@ -26,6 +26,9 @@ TILES = [
 ]
 
 
+WINDOWS_TILES = ("apps", "add_window")   # Windows programs: only with settings.windows_apps
+
+
 class Home(View):
     def __init__(self, shell):
         super().__init__(distance=DIALOG_DISTANCE)
@@ -43,9 +46,11 @@ class Home(View):
                       Label(time.strftime("%H:%M"), size=theme.TITLE, color=theme.FG, h=int(theme.HUGE * 1.5)),
                       Label(time.strftime("  %a %d %b"), size=theme.SMALL, color=theme.MUTED, h=int(theme.HUGE * 1.5))],
                      w=width)
+        windows_apps = shell.settings().windows_apps
         tiles = [Tile("tile:" + key, name, icon, color, on_click=lambda key=key: shell.home_action(key),
                       w=TILE, h=TILE, subtitle=subtitle)
-                 for key, name, icon, color, subtitle in TILES]
+                 for key, name, icon, color, subtitle in TILES
+                 if windows_apps or key not in WINDOWS_TILES]
         rows = [header]
         watching = shell.continue_watching()[:CONTINUE_SHOWN]
         if watching:

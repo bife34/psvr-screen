@@ -12,12 +12,13 @@ from OpenGL import GL
 from PIL import Image
 
 from ..core import geometry
-from ..core.paths import APP_DIR
+from ..core.paths import APP_DIR, DATA_DIR
 from ..core.log import log_error
 from .gl import Mesh, Program
 from .video_sphere import _sphere
 
 FOLDER = APP_DIR / "environments"
+MINE = DATA_DIR / "my_surroundings"      # made from your photos ("Make it my room", video/room_maker.py)
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 RADIUS = 400.0          # far enough that both eyes see it as "at the horizon"
 MAX_WIDTH = 8192
@@ -49,14 +50,29 @@ void main() {
 
 def names():
     """The surroundings to choose from (file names without extension), sorted."""
-    try:
-        return sorted(p.stem for p in FOLDER.iterdir() if p.suffix.lower() in EXTENSIONS)
-    except OSError:
-        return []
+    found = set()
+    for folder in (FOLDER, MINE):
+        try:
+            found.update(p.stem for p in folder.iterdir() if p.suffix.lower() in EXTENSIONS)
+        except OSError:
+            pass
+    return sorted(found)
 
 
 def path_of(name):
-    return next((p for p in FOLDER.glob(name + ".*") if p.suffix.lower() in EXTENSIONS), None)
+    for folder in (MINE, FOLDER):
+        found = next((p for p in folder.glob(glob_escape(name) + ".*") if p.suffix.lower() in EXTENSIONS), None)
+        if found is not None:
+            return found
+    return None
+
+
+def glob_escape(name):
+    return "".join(f"[{c}]" if c in "[]*?" else c for c in name)
+
+
+def forget_preview(name):
+    _previews.pop(name, None)
 
 
 _previews = {}

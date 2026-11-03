@@ -3,7 +3,7 @@ import numpy as np
 from OpenGL import GL
 
 from ..core import geometry
-from ..scene.surface import INTERFACE, OVERLAY, WORLD
+from ..scene.surface import BLACK, INTERFACE, OVERLAY, WORLD
 from .gl import MeshCache, Mesh, Program
 from .environment import Environment
 from .video_sphere import VideoSphere
@@ -64,11 +64,13 @@ class Renderer:
         self.environment = Environment()
         self._environment_look = (1.0, 0.0)   # brightness, turn
         self.smoothing = 0.0                  # settings.picture_smoothing
+        self.black = False                    # plain black around you (no floor)
 
 
     def set_environment(self, name, brightness, turn):
-        """The surroundings to show (every frame; cheap when nothing changed)."""
-        self.environment.choose(name)
+        """The surroundings to show (every frame; cheap when nothing changed). BLACK: plain black, no floor."""
+        self.black = name == BLACK
+        self.environment.choose(None if self.black else name)
         self._environment_look = (brightness, turn)
 
     def _mesh(self, s):
@@ -89,7 +91,7 @@ class Renderer:
             surfaces = [s for s in surfaces if s.shape != "sphere"]
         else:
             self.environment.draw(view_proj, *self._environment_look)
-        if not spheres and not self.environment.active:
+        if not spheres and not self.environment.active and not self.black:
             floor = self._floor_prog.use()
             floor.mat4("mvp", view_proj)
             floor.float("uv_rect", 0.0, 0.0, 1.0, 1.0)

@@ -11,3 +11,10 @@ tools/*.log
 build/
 dist/
 packaging/icon_preview.png
+
+# What the AI learned about your pictures, and rooms made from your photos (personal)
+/ai/
+/my_surroundings/
+
+# Locked rooms (encrypted, personal)
+/rooms/

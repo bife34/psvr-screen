@@ -17,7 +17,10 @@ Each layer only uses the layers below it. Hardware and Windows details never lea
  device/      The hardware: PSVR USB/HID protocol, head tracking, the headset session, the DS4
  win/         Windows services: monitors, app windows, capture, input injection, mouse hook, media, browser address
  video/       VR videos: recognising the kind (tags, picture), YouTube / any site (yt-dlp), files on the PC,
-              decoding picture and sound in sync (PyAV, sounddevice)
+              decoding picture and sound in sync (PyAV, sounddevice); photo -> surroundings (room_maker)
+ ai/          Local AI, on the processor (ONNX Runtime, half the cores - the GPU is busy with VR): CLIP
+              (search, galaxy), faces, depth, places (GPS -> town, offline), the index of what it saw
+              (sqlite; memory only in private mode), questions -> pictures (ask), voice (Vosk)
  panel/       The control panel on the main screen (Tk)
  legacy/      The old SteamVR overlay mode (still selectable in the control panel)
 ```

@@ -15,7 +15,7 @@ from ..ui.theme import Icon
 from ..ui.widgets import Button, Card, Grid, Label, Panel, Row, Spacer
 from ..video import files, recognize
 from ..video.thumbs import THUMBNAILS
-from .base import Page, ViewContent
+from .base import Page
 
 PAGE_WIDTH = 1640
 COLUMNS = 4
@@ -213,10 +213,3 @@ class Library(Page):
                               on_click=lambda: self._turn(1, pages))]
         rows.append(Row(footer, w=w, h=h, gap=12))
         return Panel(rows, pad=32, gap=theme.GAP)
-
-
-class VideosApp(ViewContent):
-    icon = Icon.VIDEO
-
-    def __init__(self, panel, host):
-        super().__init__(panel, host, Library(host))

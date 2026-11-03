@@ -52,7 +52,7 @@ def tilt(degrees):
     return rotate_x(-degrees)
 
 
-def perspective(tan_x, tan_y, near=0.05, far=1000.0):
+def perspective(tan_x, tan_y, near=0.05, far=20000.0):
     m = np.zeros((4, 4), np.float32)
     m[0, 0] = 1.0 / tan_x
     m[1, 1] = 1.0 / tan_y

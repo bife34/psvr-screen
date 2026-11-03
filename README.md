@@ -20,6 +20,15 @@ games.
   extra software.
 - **Layouts**: windows around you, one big desktop in front of you, or a screen that follows your head. The
   dock (bottom bar) can be moved anywhere.
+- **Photo wall**: a folder's photos and videos around you - on a sphere, a ring, a flat wall or as a **memory
+  galaxy** (similar pictures float together, groups named by the AI). Videos play when you point at them; a
+  live wall plays them all. Pages, zoom, drag to move, look-to-pick.
+- **Local AI (nothing leaves your PC)**: search and questions by voice or typed - "find beach", "when was I
+  last in Lisbon" (GPS), "photos from 2024"; **People** (faces grouped); **photos in 3D** (AI depth), **step
+  inside** a photo, **living photos**, **make a photo your room**; **AI 3D for flat videos**; a video's
+  **timeline in space**; **memory rooms** (save a wall with its search, shape and surroundings).
+- **Voice commands** (offline, the headset's microphone): "galaxy", "next", "bigger", "show videos", "step
+  inside", "exit"... The AI models (~800 MB) download once, the first time they're needed.
 
 ## What you need
 

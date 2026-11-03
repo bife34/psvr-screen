@@ -198,7 +198,7 @@ class DirectEngine(threading.Thread):
             surfaces = surfaces + self.shell.overlay()
 
             # Both eyes, then the lens correction
-            renderer.set_environment(s.environment, s.environment_brightness, s.environment_turn)
+            renderer.set_environment(*self.shell.surroundings(s))
             renderer.smoothing = s.picture_smoothing
             display.set_scale(QUALITY_SCALES.get(s.picture_quality, QUALITY_SCALES["normal"]))
             proj = display.projection(s.lens_fov)
@@ -208,6 +208,7 @@ class DirectEngine(threading.Thread):
                 display.begin_eye(eye)
                 renderer.draw_eye(proj @ view, surfaces, eye)
             display.present(s.lens_k1, s.lens_k2, s.lens_apart, s.lens_height, s.eye_test)
+            display.keep_shown()
             renderer.end_frame()
 
             frames += 1

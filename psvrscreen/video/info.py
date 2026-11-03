@@ -22,6 +22,8 @@ class VideoInfo:
     duration: float = 0.0    # seconds (0 = unknown, e.g. live)
     fov: float = recognize.DEFAULT_FISHEYE_FOV   # fisheye: degrees the lens sees
     start: float = 0.0       # seconds: where playing starts (Continue watching)
+    album: tuple = ()        # a picture: the pictures Previous / Next go through (paths)
+    opener: object = None    # a file in a locked room's safe: makes a new decrypting file object (no url)
 
 
 def open_options(headers):

@@ -222,7 +222,10 @@ class Slider(Widget):
                anchor="lm")
         value_text = self.disabled_text if self.disabled else self.text(self.value)
         d.text((x1 - 24, cy), value_text, font=theme.font(theme.SMALL), fill=theme.MUTED, anchor="rm")
-        t0, t1 = x0 + int(w * 0.32), x0 + int(w * 0.76)
+        if self.label:
+            t0, t1 = x0 + int(w * 0.32), x0 + int(w * 0.76)
+        else:   # no label: the track starts at the left, the value keeps its room on the right
+            t0, t1 = x0 + 24, x1 - 130
         frac = max(0.0, min(1.0, (self.value - self.lo) / (self.hi - self.lo)))
         color = theme.DISABLED if self.disabled else theme.ACCENT
         d.rounded_rectangle((t0, cy - 6, t1, cy + 6), 6, fill=theme.TRACK)

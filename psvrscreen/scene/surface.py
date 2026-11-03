@@ -13,6 +13,7 @@ from ..core import geometry
 # Drawing order. WORLD: windows and things in the room (hidden behind nearer things). INTERFACE: bars, dock,
 # dialogs - drawn after the world, still behind nearer surfaces. OVERLAY: always visible (the pointer dot).
 WORLD, INTERFACE, OVERLAY = 0, 1, 2
+BLACK = "<black>"   # surroundings: plain black, no floor (the renderer knows it; not a scene file)
 
 
 @dataclass(eq=False)

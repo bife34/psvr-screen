@@ -1,7 +1,9 @@
 """Photos: your pictures in a grid (newest in Pictures / Desktop / Downloads, or any drive's folders), a viewer
-with previous / next, and "View around me" - 360° / 180° / 3D pictures shown around you like a VR video.
+with previous / next, "View around me" - 360° / 180° / 3D pictures shown around you like a VR video - and
+"Photo wall": a folder's pictures side by side around you (shell/photo_wall.py).
 """
 import threading
+from pathlib import Path
 
 from PIL import Image
 
@@ -9,7 +11,7 @@ from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.widgets import Button, Label, Panel, Picture, Row, Spacer
 from ..video import files, recognize
-from .base import ViewContent
+
 from .videos import CARD_H, PAGE_WIDTH, ROWS, Library
 
 VIEW_SIZE = 2400                  # the viewer's picture is decoded this big at most
@@ -52,6 +54,13 @@ class PhotosPage(Library):
     def badges(self, path):
         return _kind(path)
 
+    def extra_buttons(self, h):
+        folder = Path(self.place)
+        return [Button("wall", "Photo wall", Icon.GALLERY, h=h, style="primary", size=theme.TEXT - 6,
+                       on_click=lambda: self.host.view_wall(folder)),
+                Button("rooms", "Rooms", Icon.STAR, h=h, style="normal", size=theme.TEXT - 6,
+                       on_click=self.host.rooms_menu)]
+
     def go(self, place):
         self.viewing = None
         super().go(place)
@@ -64,7 +73,7 @@ class PhotosPage(Library):
     def _load_big(self, path):
         def load():
             try:
-                with Image.open(path) as image:
+                with Image.open(files.source(path)) as image:     # (a safe's photo too)
                     image.draft("RGB", (VIEW_SIZE, VIEW_SIZE))
                     image = image.convert("RGB")
                     image.thumbnail((VIEW_SIZE, VIEW_SIZE))
@@ -106,16 +115,11 @@ class PhotosPage(Library):
                              on_click=lambda: self._step(-1)),
                       Spacer(flex=1),
                       Button("around", "View around me", Icon.SPHERE, h=h, style="primary", size=theme.TEXT - 6,
-                             on_click=lambda: self.host.view_photo(path)),
+                             on_click=lambda: self.host.view_photo(path, pictures)),
+                      Button("wall", "Photo wall", Icon.GALLERY, h=h, style="primary", size=theme.TEXT - 6,
+                             on_click=lambda: self.host.view_wall(path.parent)),
                       Spacer(flex=1),
                       Button("next", "Next", Icon.NEXT, h=h, style="normal", size=theme.TEXT - 6,
                              on_click=lambda: self._step(1))], w=w, h=int(h * 1.2), gap=12)
         return Panel([header, Picture(image, w, picture_h - int(h * 1.2), fit=True, icon=Icon.PHOTO), footer],
                      pad=32, gap=theme.GAP)
-
-
-class PhotosApp(ViewContent):
-    icon = Icon.PHOTO
-
-    def __init__(self, panel, host):
-        super().__init__(panel, host, PhotosPage(host))

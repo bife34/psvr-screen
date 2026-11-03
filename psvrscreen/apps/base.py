@@ -35,6 +35,15 @@ class Content:
     def on_pointer(self, e):
         """Pointer input inside the window (scene.events.PointerEvent)."""
 
+    def offset(self, now):
+        """A move of the window's picture for an animation (4x4, in the window's own space), or None."""
+        return None
+
+    def extra_surfaces(self, panel, model, height, now):
+        """More surfaces that belong to the window (`model`: where its picture is; `height`: m), e.g. Files'
+        folders behind it. Every frame."""
+        return []
+
     def request_close(self):
         """The window's close button: ask the app to close (it may ask to save first)."""
         self.closed = True

@@ -18,6 +18,8 @@ import numpy as np
 
 SAME_PICTURE = 0.3               # halves whose details correlate this much hold the same picture (3D);
                                  # measured: 3D 0.45-0.92, normal videos below 0.05
+PHOTO_SAME_PICTURE = 0.45        # one still picture: stricter - ordinary photos of tiles, walls, water or
+                                 # symmetric rooms reach 0.35 (measured on phone photos); real 3D photos 0.45+
 DARK = 24                        # brightness (0-255) counted as black: borders, fisheye corners
 FISHEYE_FOV = {"mkx200": 200, "mkx220": 220, "vrca220": 220, "rf52": 190}
 DEFAULT_FISHEYE_FOV = 190
@@ -112,10 +114,10 @@ def stereo_scores(gray):
             _same_picture(y[:h // 2], y[h // 2:h // 2 * 2]))
 
 
-def stereo_of(scores):
-    """The layout from averaged stereo_scores."""
+def stereo_of(scores, threshold=SAME_PICTURE):
+    """The layout from averaged stereo_scores (threshold: PHOTO_SAME_PICTURE for a single still picture)."""
     side, stacked = scores
-    if max(side, stacked) < SAME_PICTURE:
+    if max(side, stacked) < threshold:
         return "mono"
     return "side_by_side" if side >= stacked else "top_bottom"
 

@@ -45,7 +45,9 @@ class Dock(View):
         s = self.shell.settings()
         selected = s.panels[s.selected]["id"] if s.panels else None
         return (tuple((p["id"], p["title"], p["source"], p.get("shown", True)) for p in s.panels), selected,
-                s.private_mode, time.strftime("%H:%M"), getattr(self.shell.dialog, "kind", None))
+                s.private_mode, time.strftime("%H:%M"), getattr(self.shell.dialog, "kind", None),
+                s.voice_control, self.shell.voice is not None and self.shell.voice.listening,
+                self.shell.rooms.current_name(), bool(self.shell.rooms.secret))
 
     def build(self):
         shell = self.shell
@@ -80,11 +82,21 @@ class Dock(View):
                       on_press=lambda e: shell.dock_menu() if e.button == "right" else shell.grab_dock(e),
                       on_drag=shell.gesture_drag, on_release=shell.gesture_release, on_wheel=shell.gesture_wheel)
         layout_name, layout_icon = LAYOUTS.get(s.layout, LAYOUTS["space"])
-        return Panel([grip, home, action("layout", layout_icon, layout_name), divider, *tabs, divider,
+        listening = shell.voice is not None and shell.voice.listening
+        talk = Button("listen", "Talk", Icon.MIC, h=h, size=theme.TEXT - 4,
+                      style="normal" if listening else "flat", selected=listening,
+                      on_click=lambda: shell.dock_action("listen"))
+        room = Button("rooms", shell.rooms.current_name(), Icon.LOCKED if shell.rooms.secret else Icon.HOME, h=h,
+                      size=theme.TEXT - 4, style="flat", selected=bool(shell.rooms.secret),
+                      on_click=shell.rooms_dock_menu)
+        return Panel([grip, home, room, action("layout", layout_icon, layout_name), divider, *tabs, divider,
+                      *([talk] if s.voice_control else []),
                       action("recenter", Icon.RECENTER, "Recenter"),
                       action("global_settings", Icon.SETTINGS, "Settings"),
                       action("mouse_to_pc", Icon.MOUSE, "PC"),
-                      Label(time.strftime("%H:%M"), size=theme.TEXT - 4, color=theme.MUTED, h=h, indent=8)],
+                      action("power", Icon.POWER),
+                      Button("clock", time.strftime("%H:%M"), h=h, size=theme.TEXT - 4, style="flat",
+                             on_click=shell.rooms.clock_tapped)],
                      horizontal=True, pad=10, gap=8, h=theme.BAR)
 
 

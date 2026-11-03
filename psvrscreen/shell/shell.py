@@ -8,6 +8,8 @@ after the pointer has handled this frame's input. Render thread only, except whe
 """
 import math
 import os
+import shutil
+import queue
 import threading
 import time
 from pathlib import Path
@@ -19,18 +21,23 @@ from ..apps.desktop import new_game_panel, new_panel_for
 from ..core import geometry
 from ..core.log import log_error
 from ..core.settings import new_panel, shown_title
-from ..scene.surface import INTERFACE, OVERLAY, Surface
+from ..scene.surface import BLACK, INTERFACE, OVERLAY, Surface
 from ..ui.theme import Icon
 from ..video import files
 from ..win import displays, start_apps, steamvr, windows
 from ..win.media import MediaWatcher
 from . import workspace
 from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
-from .dialogs import DIALOG_DISTANCE, MENU_DISTANCE, ContextMenu, GlobalSettings, ListDialog
+from .dialogs import DIALOG_DISTANCE, MENU_DISTANCE, ContextMenu, DragChip, GlobalSettings, ListDialog, RingMenu
 from .dock import DOCK_DISTANCE, Dock, Player, dock_model
 from .home import Home
 from .motion import Motion
 from .pointer import Pointer
+from . import assistant, file_ops, voice_commands
+from .photo_wall import PhotoWall
+from .rooms import Keypad, RecoveryKey, Rooms
+from .timeline import TimelineRibbon
+from .toast import ToastView
 from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_video
 
 BAR_LINGER_SECONDS = 1.5          # a window's title bar stays this long after the pointer leaves the window
@@ -51,6 +58,13 @@ LAUNCHED_FROM_VR_SECONDS = 20     # apps can take a while to show their window a
 LENS_HEIGHT, LENS_ZOOM = 0.23, 2.0  # zoom lens: a strip the window's width, this tall (part of the width); 2x
 LENS_LIFT = 0.05                  # meters in front of the window
 POINTER_BLUE = (0.31, 0.61, 0.98, 1.0)
+SPACE_SKY = "Deep space"          # the photo wall is out in space: only stars around you (environments/)
+
+
+
+def models_status(group):
+    from ..ai import models
+    return models.status.get(group, "starting")
 
 
 class AppHost:
@@ -66,6 +80,9 @@ class AppHost:
     def update_panel(self, window_id, **fields):
         self._shell.store.update_window(window_id, **fields)
 
+    def set_setting(self, key, value):
+        self._shell.store.update(**{key: value})
+
     def slot_of(self, window_id):
         """A small number per window (staggers them on the VR monitor)."""
         ids = [p["id"] for p in self._shell.settings().panels]
@@ -74,13 +91,25 @@ class AppHost:
     def note_click(self):
         self._shell.last_click = time.monotonic()
 
+    def toast(self, text):
+        self._shell.toast(text)
+
     def play_file(self, path):
         """Play a video file around you (from the Videos app)."""
         self._shell.watch_file(path)
 
-    def view_photo(self, path):
-        """Show a picture around you (Photos: 360° / 180° / 3D pictures)."""
-        self._shell.watch_photo(path)
+    def view_photo(self, path, album=()):
+        """Show a picture around you (Photos: 360° / 180° / 3D pictures); `album`: what Previous / Next go
+        through."""
+        self._shell.watch_photo(path, album)
+
+    def view_wall(self, folder):
+        """A folder's pictures and videos around you, side by side (Photos)."""
+        self._shell.watch_wall(folder)
+
+    def rooms_menu(self):
+        """Memory rooms saved from photo walls."""
+        self._shell.rooms_menu()
 
     def video_file_menu(self, path, recent=False):
         """Right click on a video file: how to play it (and, in Recent, remove it from there)."""
@@ -114,6 +143,22 @@ class AppHost:
         """Right click on a file in Files."""
         self._shell.file_menu(path)
 
+    def folder_menu(self, path, window_id=None):
+        """Right click on a folder in Files."""
+        self._shell.folder_menu(path, window_id)
+
+    def room_safe(self):
+        """The locked room's safe you're in (core.cryptomator.Vault), or None."""
+        return self._shell.rooms.safe
+
+    def start_file_drag(self, path, window_id):
+        """A file / folder pulled out of a Files window: it follows the pointer until let go."""
+        self._shell.start_file_drag(path, window_id)
+
+    def open_folder_window(self, path, app="files"):
+        """A window of its own for this folder (Files, Photos or Videos), where you look."""
+        self._shell.open_folder_window(path, app)
+
 
 class _Window:
     def __init__(self, content, shell, window_id):
@@ -123,6 +168,7 @@ class _Window:
         self.card = SettingsCard(shell, window_id, CARD_DISTANCE)
         self.target = _WindowTarget(shell, window_id)
         self.surface = None
+        self.corner = None   # _ResizeCorner (made when first shown)
 
 
 class _WindowTarget:
@@ -187,6 +233,20 @@ class Shell:
         self.video_detector = VideoDetector()
         self.watch_buttons = {}                  # hwnd -> WatchButton (browser windows showing a VR video)
         self.video = None                        # ImmersiveVideo while one plays
+        self.wall = None                         # PhotoWall while one shows (under a picture opened from it)
+        self._opened_wall = None                 # (folder, question, room) to show as a photo wall next frame
+        self.timeline = None                     # TimelineRibbon while one shows
+        self._opened_timeline = None             # a video file to show as a timeline next frame
+        self.voice = None                        # ai.voice.VoiceListener while voice commands are on
+        self.brain = None                        # ai.brain.Brain: the assistant (from the first Talk on)
+        self._mic_blocked = False                # the microphone gave only silence (Windows asking / said no)
+        self.file_drag = None                    # (path, from window id) while a file is dragged between windows
+        self._drag_chip = None
+        self.quit_request = None                 # "off" / "restart": the dock's power button (main thread acts)
+        self._heard = queue.Queue()              # ("voice" / "ask", words) from other threads
+        self.toast_view = ToastView(self)        # short messages ("Saved", what you said...)
+        self._later = queue.Queue()              # functions from other threads, run on the render thread
+        self.rooms = Rooms(self)                 # your rooms, and the locked ones
         self.dismissed_videos = set()            # video ids whose "Watch in VR" was closed with its x
         self.dismissed_media = None              # title of the paused media whose player row was closed
         self.played_media = set()                # titles that played during this session (paused ones stay)
@@ -209,6 +269,9 @@ class Shell:
         back into VR with the next session (the saved windows stay). Render thread, GL still current."""
         self.pointer.running = False
         self.stop_video()
+        self.stop_wall()
+        self.stop_timeline()
+        self.toast_view.release()
         self._release_watch_buttons()
         for wid in list(self.windows):
             self._drop(wid)
@@ -224,6 +287,8 @@ class Shell:
         self.pointer.stop()
         self.media.stop()
         self.video_detector.stop()
+        if self.voice is not None:
+            self.voice.stop()
         # Quitting: nothing shows the invisible monitors any more, so no window may stay on any of them.
         self.host.mover.back_all(("vr",) + tuple(displays.view_kinds()))
 
@@ -243,7 +308,7 @@ class Shell:
     def update(self, now):
         """Bring windows and interface up to date; returns this frame's surfaces (without the overlay),
         animated as they come and go."""
-        return self.motion.apply(self._surfaces(now), now)
+        return self.motion.apply(self._surfaces(now) + self.toast_view.surfaces(now), now)
 
     def _surfaces(self, now):
         self._settings = s = self.store.get()
@@ -266,11 +331,39 @@ class Shell:
             info, self._opened_file = self._opened_file, None
             self.stop_video()
             self.video = ImmersiveVideo(self, info, None)
-        # Presses on empty space: grab the video (it follows the pointer), else the surroundings (turn them)
+        if self._opened_wall is not None:
+            (folder, question, room), self._opened_wall = self._opened_wall, None
+            self.stop_video()
+            self.stop_timeline()
+            if self.wall is not None and self.wall.folder == Path(folder) and room is None:
+                self.wall.ask(question) if question else None
+            else:
+                self.stop_wall()
+                self.wall = PhotoWall(self, folder, room=room)
+                if question:
+                    self.wall.ask(question)
+        if self._opened_timeline is not None:
+            path, self._opened_timeline = self._opened_timeline, None
+            self.stop_video()
+            self.stop_timeline()
+            self.timeline = TimelineRibbon(self, path)
+        self._listen(s, now)
+        while not self._later.empty():
+            try:
+                self._later.get_nowait()()
+            except Exception:
+                log_error("later")
+        # Presses on empty space: grab the video / photo wall (it follows the pointer), else the surroundings
         self.pointer.background = (self.video.grab if self.video is not None
-                                   else self.scene_grab if s.environment else None)
+                                   else self.timeline.grab if self.timeline is not None
+                                   else self.wall.grab if self.wall is not None
+                                   else self.scene_grab if s.environment and s.scene_grab else None)
         if self.video is not None:
             return self.video.surfaces(now) + self._menu_surfaces()
+        if self.timeline is not None:
+            return self.timeline.surfaces(now) + self._menu_surfaces()
+        if self.wall is not None:
+            return self.wall.surfaces(now) + self._menu_surfaces()
         surfaces = []
         selected = s.panels[s.selected]["id"] if s.panels else None
         only = self._screen_panel_id(s) if s.layout != "space" else None
@@ -289,6 +382,9 @@ class Shell:
             self.aspects[p["id"]] = aspect
             height = p["width"] * aspect
             model = geometry.window_model(p)
+            moved = window.content.offset(now)
+            if moved is not None:
+                model = model @ moved
             if p["id"] == selected and len(s.panels) > 1:
                 surfaces.append(Surface("frame:" + p["id"], model @ geometry.translate(0, 0, -0.01),
                                         p["width"] + 0.06, height + 0.06, p["curvature"], color=POINTER_BLUE))
@@ -296,6 +392,7 @@ class Shell:
                                      texture=window.content.texture, opacity=p["opacity"], target=window.target,
                                      data={"window_id": p["id"]})
             surfaces.append(window.surface)
+            surfaces += window.content.extra_surfaces(p, model, height, now)
             surfaces += self._chrome(p, window, now)
             surfaces += self._watch_button(p, window)
         surfaces += self._system_ui()
@@ -328,11 +425,25 @@ class Shell:
         self.settings_open.discard(wid)
         self.zoomed.discard(wid)
 
+    def _resize_corner(self, p, window):
+        """The resize corner at the window's bottom right (while its title bar shows)."""
+        s = window.surface
+        size = max(0.05, min(0.14, p["width"] * 0.045))
+        spot = s.point(1.0, 1.0, lift=0.015)
+        yaw = math.degrees(math.atan2(-spot[0], -spot[2]))       # facing you
+        model = geometry.translate(*spot) @ geometry.rotate_y(yaw) @ geometry.translate(-size * 0.35, size * 0.35, 0)
+        if window.corner is None:
+            window.corner = _ResizeCorner(self, p["id"])
+        return Surface("corner:" + p["id"], model, size, size, texture=_corner_texture(), layer=INTERFACE,
+                       target=window.corner, data={"ui": True})
+
     def _chrome(self, p, window, now):
         """Title bar while you point at the window (or its settings are open), and its settings card."""
         wid = p["id"]
         settings_open = wid in self.settings_open
-        if not self.pointer.active or (now - self.bar_seen.get(wid, -10) > BAR_LINGER_SECONDS and not settings_open):
+        resizing = window.corner is not None and window.corner._start is not None   # (stays while dragged)
+        if not self.pointer.active or (now - self.bar_seen.get(wid, -10) > BAR_LINGER_SECONDS and not settings_open
+                                       and not resizing):
             return []
         out = []
         bar = window.bar
@@ -342,6 +453,8 @@ class Shell:
         model = s.model @ geometry.translate(0, s.height / 2 + bar.height / 2, 0)
         out.append(Surface("bar:" + wid, model, bar.width, bar.height, p["curvature"], texture=bar.texture,
                            layer=INTERFACE, target=window.bar_target, data={"ui": True}))
+        if not p.get("lock_position"):
+            out.append(self._resize_corner(p, window))
         if settings_open:
             card = window.card
             card.refresh()
@@ -438,8 +551,9 @@ class Shell:
     def overlay(self):
         """Pointer dot and zoom lens, after the pointer handled this frame's input."""
         if not self.pointer.active:
+            self.file_drag = None
             return []
-        out = self._lens()
+        out = self._lens() + self._dragged_file()
         direction = self.pointer.direction()
         distance = self.pointer.dot_distance()
         end = direction * (distance - 0.01)   # a hair in front of what it is on
@@ -510,8 +624,16 @@ class Shell:
             self.recenter()
         elif action == "mouse_to_pc":
             self.pointer.enabled = False
+        elif action == "listen":
+            self.listen()
+        elif action == "power":
+            self.open_menu("PSVR Screen", [
+                ("Restart PSVR Screen", Icon.RECENTER, lambda: self.quit("restart"), "flat"),
+                ("Turn off PSVR Screen", Icon.POWER, lambda: self.quit("off"), "danger")])
         elif action == "global_settings":
             self._open_dialog(GlobalSettings, lambda: GlobalSettings(self))
+        elif action in ("apps", "add_window") and not self._settings.windows_apps:
+            self.toast("Windows programs in VR are off (Settings > Controls)")
         elif action == "apps":
             native = [(f"{title}   ·   VR app", "native:" + name) for name, (title, _, _) in apps.NATIVE_APPS.items()]
             self._open_dialog("apps", lambda: ListDialog("Open an app in VR", lambda: native + self.start_apps,
@@ -552,6 +674,12 @@ class Shell:
         if e.button == "left":
             self.gesture = workspace.DockMove(self.store, e)
 
+    def quit(self, then="off"):
+        """Turn the app off ("off") or restart it ("restart"): the control panel closes and the app shuts down
+        (windows back to the PC screen, virtual monitors off). Any thread."""
+        self.quit_request = then
+        self.toast("Restarting..." if then == "restart" else "Turning off...")
+
     def dock_menu(self):
         self.open_menu("Bottom bar", [("Put the bar back", Icon.RECENTER, lambda: self.store.update(
             dock_yaw=0.0, dock_pitch=-19.3, dock_distance=DOCK_DISTANCE), "flat")])
@@ -572,6 +700,62 @@ class Shell:
         if opening:
             self.dialog = make()
             self.dialog.kind = kind
+
+    def later(self, fn):
+        """Run `fn` on the render thread, next frame (from any thread)."""
+        self._later.put(fn)
+
+    def close_dialog(self):
+        self._close_dialog()
+
+    # -- rooms ----------------------------------------------------------------------------------------
+    def rooms_dock_menu(self):
+        """The dock's room button: your rooms, a new one, a new locked one (and Lock, inside one)."""
+        rooms, s = self.rooms, self._settings
+        items = [(("● " if r["id"] == s.current_room and not rooms.secret else "") + r["name"], Icon.HOME,
+                  lambda rid=r["id"]: rooms.go(rid), "flat") for r in s.rooms]
+        items.append(("New room", Icon.ADD, rooms.new_room, "flat"))
+        items.append(("New locked room", Icon.LOCKED, lambda: self.open_keypad("new"), "flat"))
+        if rooms.secret:
+            items.insert(0, ("Lock and leave", Icon.LOCKED, rooms.lock, "danger"))
+        elif s.current_room != "home":
+            items.append(("Delete this room", Icon.CLOSE, lambda: rooms.delete_room(s.current_room), "danger"))
+        self.open_menu("Rooms", items)
+
+    def open_keypad(self, mode, message=""):
+        """The PIN pad: "unlock" (any locked room), "new" (make a locked room: PIN twice, then its recovery key)."""
+        rooms = self.rooms
+
+        def unlocked(result, pad):
+            if result is True:
+                self._close_dialog()
+            else:
+                pad.message = ("Too many tries - wait 30 seconds" if result == "wait" else "That's not it")
+
+        if mode == "unlock":
+            pad = Keypad(self, "unlock", lambda code: rooms.try_code(code, lambda r: unlocked(r, pad)), message)
+        else:
+            def first(pin):
+                self._open_dialog("keypad-again", lambda: Keypad(self, "again", lambda again: second(pin, again)))
+
+            def second(pin, again):
+                if again != pin:
+                    self._close_dialog()
+                    self.open_keypad("new", "Not the same - choose again")
+                    return
+                rooms.create_locked(pin, made)
+
+            def made(recovery):
+                self._close_dialog()
+                if recovery is None:
+                    self.toast("Couldn't make the locked room (see psvr-screen.log)")
+                    return
+                self._open_dialog("recovery", lambda: RecoveryKey(self, recovery))
+
+            pad = Keypad(self, "new", first, message)
+        self._close_dialog()
+        self.dialog = pad
+        self.dialog.kind = "keypad"
 
     def _close_dialog(self):
         if self.dialog is not None:
@@ -598,16 +782,140 @@ class Shell:
         workspace.add_window(self.store, new_panel("app:" + name, title, width=2.2, distance=2.0, height=0.1),
                              self.look_yaw)
 
-    def watch_photo(self, path):
+    def watch_photo(self, path, album=()):
         self._close_dialog()
 
         def read():
             try:
-                self._opened_file = files.probe_photo(path)
+                info = files.probe_photo(path)
             except Exception:
-                pass
+                return
+            info.album = tuple(str(p) for p in album)
+            self._opened_file = info
 
         threading.Thread(target=read, daemon=True, name="open-photo").start()
+
+    def watch_wall(self, folder, question=None, room=None):
+        """A folder's pictures and videos side by side around you (the photo wall); `question`: ask it right
+        away; `room`: a memory room to open."""
+        self._close_dialog()
+        self._opened_wall = (folder, question, room)
+
+    def open_timeline(self, path):
+        """A video's whole length as a ribbon of frames around you."""
+        self._close_dialog()
+        self._opened_timeline = Path(path)
+
+    def stop_timeline(self):
+        if self.timeline is not None:
+            self.timeline.close()
+            self.timeline = None
+
+    def rooms_menu(self, wall=None):
+        """Memory rooms: save this wall as one, or open a saved one."""
+        rooms = self._settings.memory_rooms
+        items = []
+        if wall is not None:
+            items.append(("Save this as a memory room", Icon.STAR, wall.save_room, "flat"))
+        for room in reversed(rooms[-10:]):
+            items.append((room.get("name", "Room"), Icon.SPHERE,
+                          lambda room=room: self.watch_wall(room["folder"], room=room), "flat"))
+        if rooms:
+            items.append(("Delete a room...", Icon.CLOSE, self._delete_room_menu, "danger"))
+        if not items:
+            items.append(("No memory rooms yet - open a photo wall and save one", Icon.INFO, lambda: None, "flat"))
+        self.open_menu("Memory rooms", items)
+
+    def _delete_room_menu(self):
+        rooms = self._settings.memory_rooms
+        self.open_menu("Delete which room?", [
+            (room.get("name", "Room"), Icon.CLOSE,
+             lambda room=room: self.store.update(memory_rooms=[r for r in self._settings.memory_rooms
+                                                               if r is not room and r != room]), "danger")
+            for room in reversed(rooms[-10:])])
+
+    # -- voice, questions, messages -----------------------------------------------------------------------
+    def toast(self, text):
+        """A short message in front of you for a few seconds."""
+        self.toast_view.show(text)
+
+    def listen(self):
+        """Press to talk: the microphone opens for one command (press again to stop)."""
+        if self.voice is None:
+            self.toast("Voice commands are off (Settings > Controls)")
+            return
+        s = self._settings
+        if s.smart_assistant and self.brain is None:   # the brain wakes up with the first press
+            from ..ai.brain import Brain
+            self.brain = Brain()
+            self.brain.start()
+        if self.voice.state in ("downloading", "starting"):
+            self.toast("Voice is getting ready..." if self.voice.state == "starting"
+                       else "Getting the voice ready (150 MB, once)...")
+        elif self.voice.state == "failed":
+            self.toast("Voice commands couldn't start (see psvr-screen.log)")
+        else:
+            self.voice.listen()
+
+    def _listen(self, s, now):
+        """Voice commands on / off as Settings says; what was said is done here (render thread): plain
+        commands at once, anything else by the assistant's brain (ai/brain.py) when it's there."""
+        if s.voice_control and self.voice is None:
+            from ..ai.voice import VoiceListener
+            self.voice = VoiceListener(lambda words: self._heard.put(("voice", words)))
+            self.voice.start()
+        elif not s.voice_control and self.voice is not None:
+            self.voice.stop()
+            self.voice = None
+        blocked = self.voice is not None and self.voice.blocked
+        if blocked and not self._mic_blocked:
+            self._show_pc_screen()   # Windows' permission question is only ever on the PC screen
+        self._mic_blocked = blocked
+        while not self._heard.empty():
+            kind, words = self._heard.get_nowait()
+            try:
+                if kind == "actions":
+                    said, actions = words
+                    done = assistant.run(self, actions)
+                    self.toast(f"\"{said}\"  ·  {done}" if done else f"\"{said}\"  ·  I'm not sure what to do")
+                    continue
+                brain = self.brain if s.smart_assistant else None
+                thinking = brain is not None and brain.state in ("ready", "loading")
+                done = voice_commands.handle(self, words, catch_all=not thinking)
+                if done:
+                    self.toast(f"\"{words}\"  ·  {done}")
+                elif thinking:
+                    self.toast(f"\"{words}\"  ·  Thinking...")
+                    brain.ask(words, assistant.showing(self),
+                              lambda actions, said=words: self._heard.put(("actions", (said, actions))))
+                elif brain is not None and brain.state == "downloading":
+                    self.toast(f"\"{words}\"  ·  the assistant is still downloading ({models_status('brain')})")
+                else:
+                    self.toast(f"\"{words}\"  ·  not a command I know")
+            except Exception:
+                log_error(f"command {words!r}")
+
+    def _show_pc_screen(self):
+        """The main monitor in front of you (its window, made if there's none)."""
+        main = next((p for p in self._settings.panels if p["source"] == "main"), None)
+        if main is not None:
+            self.show_window(main["id"])
+            return
+        workspace.add_window(self.store, new_panel("main", "Main monitor", width=2.4, distance=2.0, height=0.0),
+                             self.look_yaw)
+
+    def surroundings(self, s):
+        """(scene, brightness, turn) around you now: behind the photo wall plain black (calm: nothing to move
+        or sparkle), the stars, or your own - as its settings say; else the one chosen in Settings."""
+        if self.wall is not None and self.video is None and s.wall_background != "mine":
+            return (SPACE_SKY if s.wall_background == "stars" else BLACK), 1.0, 0.0
+        return s.environment, s.environment_brightness, s.environment_turn
+
+    def stop_wall(self):
+        """Back to the windows. Render thread (frees the pictures)."""
+        if self.wall is not None:
+            self.wall.close()
+            self.wall = None
 
     def watch_file(self, path, projection=None, stereo=None, start=0.0):
         """Play a video file around you; projection / stereo: as you chose it (else recognised); from `start`
@@ -709,6 +1017,16 @@ class Shell:
                             @ geometry.rotate_x(math.degrees(p.pitch))
                             @ geometry.translate(self.menu.width / 2 + 0.01, -self.menu.height / 2 - 0.01, 0))
 
+    def open_ring(self, title, items):
+        """The action ring, centred on the pointer (Files: right click on a file or folder)."""
+        self.close_menu()
+        self.menu = RingMenu(title, items, self.close_menu)
+        self.menu.refresh()
+        p = self.pointer
+        spot = p.direction() * MENU_DISTANCE
+        self._menu_model = (geometry.translate(*spot) @ geometry.rotate_y(math.degrees(p.yaw))
+                            @ geometry.rotate_x(math.degrees(p.pitch)))
+
     def close_menu(self):
         if self.menu is not None:
             self.motion.later(self.menu.release)
@@ -767,7 +1085,8 @@ class Shell:
             ("Play as 360°", Icon.PLAY, play("equi", "mono"), "flat"),
             ("Play as 360°  3D top / bottom", Icon.PLAY, play("equi", "top_bottom"), "flat"),
             ("Play as fisheye  3D side by side", Icon.PLAY, play("fisheye", "side_by_side"), "flat"),
-            ("Play on a screen (flat)", Icon.PLAY, play("screen", "mono"), "flat")] +
+            ("Play on a screen (flat)", Icon.PLAY, play("screen", "mono"), "flat"),
+            ("Timeline in space", Icon.HISTORY, lambda: self.open_timeline(path), "flat")] +
             ([("Remove from Recent", Icon.CLOSE, lambda: self.forget_recent(path), "flat")] if recent else []) +
             [("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat")])
 
@@ -811,21 +1130,186 @@ class Shell:
     def open_file(self, path):
         self._close_dialog()
         self._launched_at = time.monotonic()   # its window comes into VR (see _adopt_new_windows)
+        if not self._settings.windows_apps:
+            self.toast(f"{Path(path).name} opens on the PC screen")
         try:
             os.startfile(str(path))
         except OSError:
             log_error(f"open {path.name}")
 
+    # -- dragging files between Files windows ----------------------------------------------------------
+    def start_file_drag(self, path, window_id):
+        self.file_drag = (Path(path), window_id)
+        self._drag_chip = DragChip(Path(path))
+
+    def _dragged_file(self):
+        """The file being dragged, floating at the pointer; let go: it's dropped on what's under it."""
+        if self.file_drag is None:
+            return []
+        if not self.pointer.pressing:
+            self._drop_file()
+            return []
+        chip = self._drag_chip
+        chip.refresh()
+        p = self.pointer
+        spot = p.direction() * 1.2
+        model = (geometry.translate(*spot) @ geometry.rotate_y(math.degrees(p.yaw))
+                 @ geometry.rotate_x(math.degrees(p.pitch))
+                 @ geometry.translate(chip.width / 2 + 0.02, -chip.height / 2 - 0.02, 0))
+        return [Surface("file-drag", model, chip.width, chip.height, texture=chip.texture, layer=OVERLAY)]
+
+    def files_window_under_pointer(self):
+        """(window id, its Files page) under the pointer, or (None, None)."""
+        hit = self.pointer.hit
+        wid = hit[0].data.get("window_id") if hit else None
+        window = self.windows.get(wid)
+        page = getattr(getattr(window, "content", None), "view", None) if window else None
+        return (wid, page) if page is not None and hasattr(page, "dragging") else (None, None)
+
+    def _drop_file(self):
+        path, _ = self.file_drag
+        self.file_drag = None
+        _, page = self.files_window_under_pointer()
+        if page is None or page.place == "recent":
+            self.toast("Let go over a folder's Files window to move or copy it there")
+            return
+        target = files.as_path(page.place)
+        if target == path.parent or target == path:
+            return
+        try:
+            inside_itself = path.is_dir() and target.is_relative_to(path)
+        except TypeError:
+            inside_itself = False
+        if inside_itself:
+            self.toast("A folder can't go inside itself")
+            return
+        into = files.in_vault(target) and not files.in_vault(path)
+        out = files.in_vault(path) and not files.in_vault(target)
+        name = "the safe" if files.in_vault(target) and not target.parts else (target.name or str(target))
+        moves = "Move into the safe" if into else "Take out here" if out else "Move here"
+        copies = "Copy into the safe" if into else "Copy out here" if out else "Copy here"
+        self.open_menu(f"{path.name}  ->  {name}", [
+            (moves, Icon.LOCKED if into else Icon.FOLDER, lambda: self._file_job("move", path, target), "flat"),
+            (copies, Icon.ADD, lambda: self._file_job("copy", path, target), "flat"),
+            ("Cancel", Icon.CLOSE, lambda: None, "flat")])
+
+    def _file_job(self, how, path, target):
+        """Move / copy in the background (big files take a while), also into / out of the safe (file_ops.py);
+        every window showing either folder shows the change."""
+        into = files.in_vault(target) and not files.in_vault(path)
+
+        def run():
+            try:
+                file_ops.transfer(how, path, target)
+                done = ("Moved" if how == "move" else "Copied") + f" {path.name}"
+                if into and how == "move":
+                    done += " into the safe (the original is deleted)"
+                self.toast(done)
+            except Exception as e:
+                log_error(f"{how} {path}")
+                self.toast(f"Couldn't {how} {path.name}: {getattr(e, 'strerror', None) or e}")
+            self._refresh_folders(path.parent, target)
+
+        self.toast(f"{'Moving' if how == 'move' else 'Copying'} {path.name}...")
+        threading.Thread(target=run, daemon=True, name="file-job").start()
+
+    def _refresh_folders(self, *places):
+        """Every Files / Photos / Videos window showing one of these folders reads it again."""
+        for window in list(self.windows.values()):
+            page = getattr(window.content, "view", None)
+            if hasattr(page, "dragging") and page.place != "recent" and files.as_path(page.place) in places:
+                page.go(page.place)
+
+    def open_folder_window(self, path, app="files"):
+        """A new Files (or Photos / Videos) window showing `path` - folders as windows around you, like on a
+        desk."""
+        title = apps.NATIVE_APPS[app][0]
+        name = (path.name or "Safe") if files.in_vault(path) else (Path(path).name or path)
+        panel = new_panel("app:" + app, f"{title} · {name}", width=2.2, distance=2.0, height=0.1)
+        panel["place"] = str(path)
+        workspace.add_window(self.store, panel, self.look_yaw)
+
+    def folder_menu(self, path, window_id=None):
+        """A folder in Files: open it here or in its own window, pin it to Places, see it as a photo wall. In the
+        safe: no pins or Explorer (both would show it outside the locked room)."""
+        path = files.as_path(path)
+        items = [("Open", Icon.FOLDER, lambda: self._files_go(window_id, path), "flat"),
+                 ("Own window", Icon.ADD, lambda: self.open_folder_window(path, self._app_of(window_id)), "flat")]
+        if files.in_vault(path):
+            items.append(("Take out", Icon.FOLDER, lambda: self._take_out(path), "flat"))
+        else:
+            pinned = [str(p) for p in self._settings.pinned_folders]
+            if str(path) in pinned:
+                pin = ("Unpin", Icon.PIN, lambda: self.store.update(
+                    pinned_folders=[p for p in pinned if p != str(path)]), "flat")
+            else:
+                pin = ("Pin", Icon.PIN, lambda: self.store.update(pinned_folders=pinned + [str(path)]), "flat")
+            items += [pin, ("Photo wall", Icon.GALLERY, lambda: self.watch_wall(path), "flat"),
+                      ("Explorer", Icon.WINDOW, lambda: self.open_file(path), "flat")]
+        if not (files.in_vault(path) and not path.parts):
+            items.append(("Delete", Icon.CLOSE, lambda: self._confirm_delete(path), "danger"))
+        self.open_ring(path.name or ("Safe" if files.in_vault(path) else str(path)), items)
+
+    def _app_of(self, window_id):
+        p = self.panel(window_id) if window_id else None
+        source = p["source"] if p else ""
+        return source[4:] if source.startswith("app:") and source[4:] in ("files", "photos", "videos") else "files"
+
+    def _files_go(self, window_id, path):
+        """The Files window `window_id` goes into `path`."""
+        window = self.windows.get(window_id)
+        page = getattr(getattr(window, "content", None), "view", None)
+        if page is not None and hasattr(page, "dragging"):
+            page.go(files.as_path(path))
+
     def file_menu(self, path):
-        """A file in Files: videos get the play menu; anything else opens in its Windows app."""
-        if path.suffix.lower() in files.EXTENSIONS:
+        """A file in Files: videos get the play menu; anything else opens in its Windows app. In the safe: Take out
+        (decrypted into Downloads) instead of the Windows parts."""
+        safe = files.in_vault(path)
+        if path.suffix.lower() in files.EXTENSIONS and not safe:
             self.video_file_menu(path)
             return
-        items = [("Open", Icon.FILE, lambda: self.open_file(path), "flat")]
+        items = []
+        if safe and path.suffix.lower() in files.EXTENSIONS:
+            items.append(("Play", Icon.PLAY, lambda: self.watch_file(path), "flat"))
+        elif not safe:
+            items.append(("Open", Icon.FILE, lambda: self.open_file(path), "flat"))
         if path.suffix.lower() in files.PICTURE_EXTENSIONS:
-            items.append(("View around me", Icon.SPHERE, lambda: self.watch_photo(path), "flat"))
-        items.append(("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat"))
-        self.open_menu(shown_title(path.name, private=self._settings.private_mode), items)
+            items.append(("Around me", Icon.SPHERE, lambda: self.watch_photo(path), "flat"))
+        if safe:
+            items.append(("Take out", Icon.FOLDER, lambda: self._take_out(path), "flat"))
+        else:
+            items.append(("Explorer", Icon.FOLDER, lambda: files.show_in_folder(path), "flat"))
+        items.append(("Delete", Icon.CLOSE, lambda: self._confirm_delete(path), "danger"))
+        self.open_ring(shown_title(path.name, private=self._settings.private_mode or safe), items)
+
+    def _take_out(self, path):
+        """A file / folder out of the safe: decrypted into your Downloads (it stays in the safe too)."""
+        downloads = next((f for f in files.home_folders() if f.name in ("Downloads", "Transfer\u00eancias")),
+                         Path.home())
+        self._file_job("copy", path, downloads)
+
+    def _confirm_delete(self, path):
+        """Delete = to the Recycle Bin (it can come back), after a yes. In the safe: gone for good."""
+        safe = files.in_vault(path)
+
+        def delete():
+            try:
+                if safe:
+                    file_ops.delete_for_good(path)
+                    self.toast(f"{path.name} is deleted")
+                elif windows.to_recycle_bin(path):
+                    self.toast(f"{path.name} is in the Recycle Bin")
+                else:
+                    self.toast(f"Couldn't delete {path.name}")
+            except Exception:
+                log_error(f"delete {path}")
+                self.toast(f"Couldn't delete {path.name}")
+            self._refresh_folders(path.parent)
+
+        self.open_ring(f"Delete {path.name}?", [
+            ("Yes, for good" if safe else "Yes, to the Recycle Bin", Icon.CLOSE, delete, "danger"),
+            ("No", Icon.BACK, lambda: None, "flat")])
 
     def video_menu(self):
         video = self.video
@@ -834,15 +1318,24 @@ class Shell:
             ("Pause" if playing else "Play", Icon.PAUSE if playing else Icon.PLAY, video.play_pause, "flat"),
             ("Video settings", Icon.SETTINGS, video.toggle_settings, "flat"),
             ("Recenter here (where I look, also up / down)", Icon.RECENTER, video.recenter_here, "flat"),
-            ("Straighten (no tilt)", Icon.RECENTER, video.straighten, "flat"),
+            ("Straighten (no tilt)", Icon.RECENTER, video.straighten, "flat")] +
+            ([("Timeline in space", Icon.HISTORY, lambda: self._video_to_timeline(video), "flat")]
+             if video.info.video_url and os.path.isfile(video.info.video_url) else []) + [
             ("Mouse → PC", Icon.MOUSE, lambda: self.dock_action("mouse_to_pc"), "flat"),
             ("Exit video", Icon.CLOSE, self.stop_video, "danger")])
+
+    def _video_to_timeline(self, video):
+        path = Path(video.info.video_url)
+        self.stop_video()
+        self.open_timeline(path)
 
     def _on_shortcut(self, action):
         if action == "recenter":
             self.recenter()
         elif action == "private":
             self.store.update(private_mode=not self._settings.private_mode)
+        elif action == "listen":
+            self.listen()
         elif action == "zoom":
             hit = self.pointer.hit
             wid = hit[0].data.get("window_id") if hit else None
@@ -878,6 +1371,10 @@ class Shell:
         """Where you look became straight ahead (render thread)."""
         if self.video is not None:
             self.video.recentered()
+        if self.wall is not None:
+            self.wall.recentered()
+        if self.timeline is not None:
+            self.timeline.recentered()
 
     # -- moving / bending windows --------------------------------------------------------------------
     def grab_window(self, wid, e):
@@ -915,8 +1412,10 @@ class Shell:
         now = time.monotonic()
         if self._game is not None and now - self._game[1] > GAME_START_SECONDS:
             self._game = None
-        launched = now - self._launched_at < LAUNCHED_FROM_VR_SECONDS
-        clicked = s.auto_add_windows and self.pointer.active and now - self.last_click < OPENED_FROM_VR_SECONDS
+        # Windows programs come into VR only when turned on (Settings > Controls): one by one, as each works
+        launched = s.windows_apps and now - self._launched_at < LAUNCHED_FROM_VR_SECONDS
+        clicked = (s.windows_apps and s.auto_add_windows and self.pointer.active
+                   and now - self.last_click < OPENED_FROM_VR_SECONDS)
         if self._known_windows is not None:
             # A new window on the invisible VR monitor (Windows opens it where the app's last window was): it
             # comes into VR only if you opened it from VR, else it goes to the main screen where you opened it.
@@ -991,6 +1490,62 @@ class _SceneGrab:
             self.store.update(environment_turn=(turn + 180.0) % 360.0 - 180.0)
         elif e.kind == "release":
             self._start = None
+
+
+class _ResizeCorner:
+    """Drag the window's bottom-right corner: it grows / shrinks with the pointer (the middle stays). Apps made
+    for VR (Files, Photos, Videos) get more room - more columns and rows, same text size; anything else is a
+    picture and scales."""
+
+    def __init__(self, shell, window_id):
+        self.shell, self.window_id = shell, window_id
+        self._start = None
+
+    def on_pointer(self, e):
+        shell = self.shell
+        p = shell.panel(self.window_id)
+        if p is None:
+            return
+        window = shell.windows.get(self.window_id)
+        content = getattr(window, "content", None)
+        if e.kind == "press" and e.button == "left":
+            frame = tuple(p.get("frame") or getattr(getattr(content, "view", None), "frame", (1640, 1078)))
+            self._start = (p["width"], frame, p["distance"])
+            shell.select(self.window_id)
+        elif e.kind == "drag" and self._start is not None:
+            width0, (fw, fh), distance = self._start
+            right = math.radians(e.yaw - e.start_yaw) * distance * 2        # both sides grow: the corner follows
+            down = math.radians(e.start_pitch - e.pitch) * distance * 2
+            if getattr(content, "resizable", False):
+                from ..apps.files import MAX_FRAME, MIN_FRAME
+                px_per_m = fw / width0                                      # the same text size
+                new_fw = max(MIN_FRAME[0], min(MAX_FRAME[0], int(fw + right * px_per_m)))
+                new_fh = max(MIN_FRAME[1], min(MAX_FRAME[1], int(fh + down * px_per_m)))
+                shell.store.update_window(self.window_id, frame=[new_fw, new_fh], width=new_fw / px_per_m)
+            else:
+                grow = right if abs(right) >= abs(down) else down      # a picture: it keeps its shape
+                shell.store.update_window(self.window_id, width=max(0.3, width0 + grow))
+        elif e.kind == "release":
+            self._start = None
+
+
+_CORNER = None
+
+
+def _corner_texture():
+    """The corner's picture: three short diagonal lines, like a window's grip."""
+    global _CORNER
+    if _CORNER is None:
+        from PIL import Image, ImageDraw
+        from ..render.gl import Texture
+        img = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle((4, 4, 124, 124), 28, fill=(30, 34, 44, 220))
+        for k in (36, 64, 92):
+            d.line((124 - k + 8, 116, 116, 124 - k + 8), fill=(160, 200, 255, 255), width=9)
+        _CORNER = Texture()
+        _CORNER.upload(img)
+    return _CORNER
 
 
 class _Lingering:

@@ -272,8 +272,8 @@ def rescue_windows(kinds=("vr",)):
 def to_main(hwnd, step=0):
     """Put a window on the main monitor at its size in points (`step` staggers several)."""
     main = displays.find("main")
-    if main is None or not is_alive(hwnd):
-        return
+    if main is None or not is_alive(hwnd) or user32.IsHungAppWindow(hwnd):
+        return   # (a frozen app's window would block us: moving a window waits for its app to answer)
     w, h = normal_size_points(hwnd)
     scale = (displays.get_scale(main) or 100) / 100
     w, h = min(int(w * scale), main.width - 160), min(int(h * scale), main.height - 160)
@@ -283,3 +283,16 @@ def to_main(hwnd, step=0):
     # Move first, then size (the DPI trap, see WindowMover.to_vr_monitor).
     user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE)
     user32.SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE)
+
+
+def to_recycle_bin(path):
+    """Move a file / folder to the Recycle Bin (Windows' own way, so it can be put back). True if it went."""
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", ctypes.c_void_p), ("wFunc", ctypes.c_uint), ("pFrom", ctypes.c_wchar_p),
+                    ("pTo", ctypes.c_wchar_p), ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", ctypes.c_int),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", ctypes.c_wchar_p)]
+    FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_SILENT, FOF_NOERRORUI = 3, 0x40, 0x10, 0x4, 0x400
+    op = SHFILEOPSTRUCTW(None, FO_DELETE, str(path) + "\0", None,
+                         FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI, 0, None, None)
+    result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    return result == 0 and not op.fAnyOperationsAborted and not os.path.exists(path)

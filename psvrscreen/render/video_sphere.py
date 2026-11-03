@@ -62,6 +62,18 @@ uniform float contrast;
 uniform float saturation;
 uniform float separation; // radians the eyes' pictures are turned apart (+ = farther)
 uniform float eye_height; // radians the left eye's picture is raised over the right one's
+uniform sampler2D tex_depth;  // AI depth of a flat picture / video: 1 = near, 0 = far (ai/depth.py)
+uniform int has_depth;
+uniform float depth_amount;   // how deep: a part at depth z (vs the middle) seems exp(-1.2 * amount * z) as far
+uniform float eye_angle;      // half the eyes' distance / the screen's distance (radians)
+uniform float half_ipd_m;     // half the eyes' distance (m)
+uniform float picture_angle;  // the picture's width as seen (radians)
+uniform int living;           // 1: the picture moves gently (a slow 3D camera drift, far parts sway)
+uniform float time;
+uniform vec2 look_from;       // 3D photo: where your eyes seem to be, moved from the middle (m right, m up)
+uniform float inside_tan;     // "inside": tan(half the picture's width angle) - you stand where the camera was
+uniform float eye_aspect;     // the picture's height / width
+uniform float screen_depth;   // the picture's middle depth: stays on the screen (nearer pops out, farther goes in)
 out vec4 color;
 const float PI = 3.14159265;
 
@@ -92,6 +104,29 @@ vec2 cube(vec3 d) {
 
 const vec4 BLACK = vec4(0.0, 0.0, 0.0, 1.0);
 
+// Each eye sees the picture from its own side: a part that seems nearer than the screen shifts toward the
+// other eye, a farther one away (never past "infinitely far", which eyes can't fuse). Found backwards: the spot
+// whose shifted place is here (a few rounds, as the shift depends on the spot's own depth). Living: a slow
+// imaginary head movement (a few cm) moves near and far parts differently - the 3D drift.
+vec2 with_depth(vec2 uv) {
+    if (has_depth == 0) return uv;
+    float side = (eye == 0 ? 1.0 : -1.0) * eye_angle / picture_angle;
+    // Looking from the side: like your eyes moved there - near parts slide over far ones
+    vec2 drift = vec2(-look_from.x, look_from.y / eye_aspect) * eye_angle / (picture_angle * half_ipd_m);
+    if (living == 1) drift += vec2(sin(time * 0.35), 0.45 * sin(time * 0.23)) * 1.5 * eye_angle / picture_angle;
+    vec2 at = uv;
+    for (int i = 0; i < 4; i++) {
+        float z = texture(tex_depth, at).r - screen_depth;
+        float nearer = exp(1.2 * depth_amount * z) - 1.0;    // 1 / (seeming distance) - 1 / (screen distance)
+        at = uv - (vec2(side, 0.0) + drift) * nearer;
+    }
+    if (living == 1) {   // far parts (sky, water, distant leaves) sway a little
+        float far = clamp(1.0 - texture(tex_depth, at).r / max(screen_depth, 0.05), 0.0, 1.0);
+        at += vec2(sin(time * 1.1 + at.y * 25.0), cos(time * 0.9 + at.x * 18.0)) * 0.0018 * far;
+    }
+    return at;
+}
+
 void main() {
     vec3 n = normalize(v_dir);
     vec3 d = vec3(n.x, n.y, -n.z);        // x right, y up, z = straight ahead
@@ -101,13 +136,26 @@ void main() {
     d = vec3(d.x, d.y * cos(lift) - d.z * sin(lift), d.y * sin(lift) + d.z * cos(lift));
     vec2 uv;
     float lon = atan(d.x, d.z), lat = asin(clamp(d.y, -1.0, 1.0));
+    float edge = 1.0;                     // "inside": outside the picture it fades away softly
+    if (projection == 5) {
+        if (d.z < 0.05) { color = BLACK * opacity; return; }
+        uv = vec2(0.5 + d.x / d.z / (2.0 * inside_tan), 0.5 - d.y / d.z / (2.0 * inside_tan * eye_aspect));
+        vec2 out_by = max(max(-uv, uv - 1.0), 0.0);
+        edge = exp(-6.0 * length(out_by));
+        uv = clamp(with_depth(uv), 0.001, 0.999);
+        vec3 c = texture(tex_y, mix(crop.xy, crop.zw, uv)).rgb;
+        if (rgb == 0) c = vec3(texture(tex_y, uv).r);
+        color = vec4(adjust(c) * edge, opacity);
+        return;
+    }
     if (projection != 3) {                // size: angles shrink as the video grows
         lon /= size; lat /= size;
         if (abs(lon) > PI || abs(lat) > PI * 0.5) { color = BLACK * opacity; return; }
         d = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
     }
-    if (projection == 3) {
-        uv = v_uv;
+    if (projection == 3) {               // a flat screen: the eyes' pictures slide apart / up and down instead
+        vec2 slide = vec2(turn / picture_angle, lift / (picture_angle * eye_aspect));
+        uv = clamp(with_depth(v_uv + slide), 0.001, 0.999);
     } else if (projection == 4) {
         float theta = acos(clamp(d.z, -1.0, 1.0));
         if (theta > fisheye_fov * 0.5) { color = BLACK * opacity; return; }
@@ -134,7 +182,7 @@ void main() {
     color = vec4(adjust(rgb), opacity);
 }
 """
-PROJECTIONS = {"equi": 0, "equi180": 1, "mesh": 2, "screen": 3, "fisheye": 4}
+PROJECTIONS = {"equi": 0, "equi180": 1, "mesh": 2, "screen": 3, "fisheye": 4, "inside": 5}
 STEREO = {"mono": 0, "top_bottom": 1, "side_by_side": 2}
 
 
@@ -237,6 +285,45 @@ class VideoTexture:
         self.size = None
 
 
+class DepthTexture:
+    """An AI depth map on the GPU (one float per pixel, 1 = near): the shader shifts each eye's view by it."""
+
+    def __init__(self):
+        self.id = GL.glGenTextures(1)
+        self.size = None
+        self.middle = 0.5
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self.id)
+        for name, value in ((GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR), (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
+                            (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE), (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)):
+            GL.glTexParameteri(GL.GL_TEXTURE_2D, name, value)
+
+    @property
+    def ready(self):
+        return self.size is not None
+
+    def upload(self, depth):
+        depth = np.ascontiguousarray(depth, dtype=np.float32)
+        self.middle = float(np.median(depth))
+        h, w = depth.shape
+        GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self.id)
+        if self.size != (w, h):
+            GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_R32F, w, h, 0, GL.GL_RED, GL.GL_FLOAT, depth)
+            self.size = (w, h)
+        else:
+            GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, w, h, GL.GL_RED, GL.GL_FLOAT, depth)
+        GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 4)
+
+    def bind(self, unit):
+        GL.glActiveTexture(GL.GL_TEXTURE0 + unit)
+        GL.glBindTexture(GL.GL_TEXTURE_2D, self.id)
+        GL.glActiveTexture(GL.GL_TEXTURE0)
+
+    def delete(self):
+        GL.glDeleteTextures(1, [self.id])
+        self.size = None
+
+
 class VideoSphere:
     """Draws sphere surfaces (scene Surface with shape "sphere", texture = VideoTexture, model = where the
     video's front is, data = {"projection", "stereo", "distance", "screen_degrees", "screen_curve", "size",
@@ -247,7 +334,7 @@ class VideoSphere:
     def __init__(self):
         self._prog = Program(VS, FS)
         prog = self._prog.use()
-        for unit, name in enumerate(("tex_y", "tex_u", "tex_v")):
+        for unit, name in enumerate(("tex_y", "tex_u", "tex_v", "tex_depth")):
             prog.int(name, unit)
         self._mesh = Mesh(*_sphere())
         self._panel, self._panel_shape = None, None
@@ -269,6 +356,27 @@ class VideoSphere:
         prog.float("saturation", data.get("saturation", 1.0))
         prog.float("separation", float(np.radians(data.get("ipd", 0.0))))
         prog.float("eye_height", float(np.radians(data.get("eye_height", 0.0))))
+        depth = data.get("depth")
+        has_depth = depth is not None and depth.ready and data.get("stereo", "mono") == "mono"
+        prog.int("has_depth", 1 if has_depth else 0)
+        prog.float("depth_amount", float(data.get("depth_amount", 1.0)))
+        prog.int("living", 1 if data.get("living") else 0)
+        prog.float("time", float(data.get("time", 0.0)) % 10000.0)
+        prog.float("inside_tan", float(np.tan(np.radians(data.get("inside_degrees", 100.0) / 2))))
+        prog.float("screen_depth", float(depth.middle) if has_depth else 0.5)
+        half_ipd = data.get("ipd_m", 0.064) / 2
+        if projection == "inside":
+            seen_at = data.get("distance", 10.0)
+            picture = np.radians(data.get("inside_degrees", 100.0))
+        else:
+            seen_at = data.get("distance", 10.0) + data.get("move_away", 0.0)
+            picture = np.radians(data.get("screen_degrees", 60.0))
+        prog.float("eye_angle", float(half_ipd / max(seen_at, 0.1)))
+        prog.float("half_ipd_m", float(half_ipd))
+        prog.float("look_from", *(float(v) for v in data.get("look_from", (0.0, 0.0))))
+        prog.float("picture_angle", float(max(picture, 0.1)))
+        if has_depth:
+            depth.bind(3)
         x0, y0, x1, y1 = data.get("crop", (0.0, 0.0, 1.0, 1.0))
         w, h = surface.texture.size[0] * (x1 - x0), surface.texture.size[1] * (y1 - y0)
         stereo = surface.data.get("stereo")
@@ -287,6 +395,7 @@ class VideoSphere:
         else:   # the dome grows; the picture keeps its real size on it, so it covers less of your view
             mesh, model = self._mesh, placed @ geometry.scale(distance + away)
             prog.float("size", data.get("size", 1.0) * distance / (distance + away))
+        prog.float("eye_aspect", float(eye_aspect))
         prog.mat4("mvp", view_proj @ model.astype(np.float32))
         prog.float("opacity", surface.opacity)
         surface.texture.bind()

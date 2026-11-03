@@ -35,3 +35,24 @@ def from_tk(state, keysym):
     key = keysym.upper() if len(keysym) == 1 else keysym.capitalize()
     text = "+".join(mods + [key])
     return text if parse(text) else None
+
+
+_KEYS = ([(chr(c), c) for c in range(ord("A"), ord("Z") + 1)] + [(chr(c), c) for c in range(ord("0"), ord("9") + 1)]
+         + [(f"F{i}", 0x70 + i - 1) for i in range(1, 13)]
+         + [("Space", 0x20), ("Home", 0x24), ("End", 0x23), ("Insert", 0x2D), ("Pause", 0x13)])
+ESCAPE = 0x1B
+
+
+def pressed_now():
+    """The shortcut being pressed on the keyboard right now ("Ctrl+Alt+V"), "Escape", or None (nothing usable
+    yet: no key, or no Ctrl / Alt / Shift with it). For changing a shortcut from inside VR."""
+    import ctypes
+    down = lambda vk: bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+    if down(ESCAPE):
+        return "Escape"
+    mods = [name for name, vk in (("Ctrl", 0x11), ("Alt", 0x12), ("Shift", 0x10), ("Win", 0x5B)) if down(vk)]
+    for name, vk in _KEYS:
+        if down(vk):
+            text = "+".join(mods + [name])
+            return text if parse(text) else None
+    return None

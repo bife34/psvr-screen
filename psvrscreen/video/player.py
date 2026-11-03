@@ -162,7 +162,7 @@ class VideoPlayer:
         """Decode `url` from the current seek target on; `handle(frame, target, generation)` per frame.
         Seeks restart it at the new target. The leader (picture) starts at the keyframe before the target and
         makes that the start; the other one waits for it, then starts there exactly."""
-        container = av.open(url, options=self._options, timeout=20)
+        container = av.open(url() if callable(url) else url, options=self._options, timeout=20)   # (a safe's file)
         try:
             stream = open_stream(container)
             while not self._stop:

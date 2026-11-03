@@ -78,6 +78,38 @@ def _find_headset_monitor():
     return others[0] if others else None
 
 
+GWL_EXSTYLE, GWLP_HWNDPARENT = -20, -8   # extended style; for a top-level window: its owner
+WS_EX_APPWINDOW = 0x40000                # "always on the taskbar" (GLFW sets it)
+SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE = 0, 5, 4
+DWMWA_EXCLUDED_FROM_PEEK = 12
+
+
+def _hide_from_taskbar(hwnd):
+    """The headset's window gets no taskbar button: clicking it there minimized it (the headset then showed the
+    plain desktop). It's given a hidden owner window - owned windows aren't on the taskbar - and stays a normal
+    window otherwise: a "tool window" style made Windows send every frame through its compositor, and the VR
+    trembled. And it stays when Windows "peeks" (pointing at an app's preview on the taskbar hides every other
+    window for a moment)."""
+    flag = ctypes.c_int(1)
+    ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), DWMWA_EXCLUDED_FROM_PEEK,
+                                               ctypes.byref(flag), ctypes.sizeof(flag))
+    user32 = ctypes.windll.user32
+    user32.CreateWindowExW.restype = ctypes.c_void_p
+    user32.CreateWindowExW.argtypes = (ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint,
+                                       ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                       ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+    user32.SetWindowLongPtrW.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p)
+    owner = user32.CreateWindowExW(0, "STATIC", "PSVR Screen - owner", 0, 0, 0, 0, 0, None, None, None, None)
+    if not owner:
+        return
+    user32.ShowWindow(ctypes.c_void_p(hwnd), SW_HIDE)       # the taskbar only notices while it's hidden
+    user32.SetWindowLongPtrW(ctypes.c_void_p(hwnd), GWLP_HWNDPARENT, ctypes.c_void_p(owner))
+    user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    style = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
+    user32.SetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE, ctypes.c_void_p(style & ~WS_EX_APPWINDOW))
+    user32.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOW)
+
+
 class HeadsetDisplay:
     """simulator=True: a normal window on the main screen showing the same two-lens picture (no headset)."""
 
@@ -106,6 +138,7 @@ class HeadsetDisplay:
             self.window = glfw.create_window(mode.size.width, mode.size.height, "PSVR Screen - headset", None, None)
             if self.window:
                 glfw.set_window_pos(self.window, *glfw.get_monitor_pos(monitor))
+                _hide_from_taskbar(glfw.get_win32_window(self.window))
         if not self.window:
             glfw.terminate()
             raise HeadsetError("could not open the headset window")
@@ -161,6 +194,16 @@ class HeadsetDisplay:
             return
         hwnd = glfw.get_win32_window(self.window)
         ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # TOPMOST, no move/size/activate
+        self.keep_shown()
+
+    def keep_shown(self):
+        """Never minimized (Win + D, "Show desktop", minimize all...): the headset would show the plain desktop,
+        blurry through the lenses. Cheap: every frame."""
+        if self.simulator:
+            return
+        hwnd = glfw.get_win32_window(self.window)
+        if ctypes.windll.user32.IsIconic(hwnd):
+            ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
 
     @property
     def should_close(self):

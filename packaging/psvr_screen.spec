@@ -10,7 +10,7 @@ binaries, hiddenimports = [], collect_submodules("psvrscreen")
 
 # Libraries with native parts or plugins loaded at run time: take them whole
 for package in ("windows_capture", "libusb_package", "uiautomation", "sounddevice", "glfw", "av", "hid",
-                "OpenGL", "openvr", "winrt", "comtypes", "mss"):
+                "OpenGL", "openvr", "winrt", "comtypes", "mss", "onnxruntime", "onnxruntime_genai", "faster_whisper", "ctranslate2", "tokenizers", "cv2"):
     d, b, h = collect_all(package)
     datas += d
     binaries += b

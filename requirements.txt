@@ -17,3 +17,9 @@ av
 sounddevice
 yt-dlp
 uiautomation
+opencv-python
+onnxruntime
+onnxruntime-genai
+faster-whisper
+tokenizers
+cryptography
