@@ -397,6 +397,7 @@ class PhotoWall:
             items.append(("Timeline in space", Icon.HISTORY, lambda: self.shell.open_timeline(path), "flat"))
         else:
             items.append(("View around me", Icon.SPHERE, lambda: self.shell.watch_photo(path), "flat"))
+            items.append(("Use as surroundings", Icon.GALLERY, lambda: self.shell.use_as_surroundings(path), "flat"))
         record = ai_index.lookup(item.path, self._private())
         for n, person in enumerate(self._people()):
             if record and any(key[0] == item.path for key in person):

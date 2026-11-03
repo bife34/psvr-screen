@@ -53,6 +53,45 @@ DOME_MAP_PX = 300                  # the dome map in the video settings
 LOOK_PAD_W, LOOK_PAD_H = 340, 170  # 3D photo: the Look-from pad
 VOLUME_WIDTH = 380                 # the volume slider next to the time line
 PLACE_LIMIT = 0.9                  # you can go this far from the middle (part of the radius)
+EYE_KEYS = ("video_ipd", "video_eye_height", "video_eye_roll", "video_eye_scale")   # kept per video
+ALIGN_WIDTH = 960                  # Auto-align looks at each eye's picture this wide
+ALIGN_SIGNS = (-1.0, -1.0, -1.0)   # how Auto-align's findings map onto the sliders (height, turn, size)
+
+
+def measure_eyes(frame, stereo, crop=(0.0, 0.0, 1.0, 1.0)):
+    """How the right eye's picture is off against the left one's in a 3D frame (a video Frame or a BGRA
+    picture): (vertical px at the middle, turn degrees, size factor, eye picture width px, matches). Raises
+    ValueError when there's too little detail to tell."""
+    import cv2
+    gray = frame.y if hasattr(frame, "y") else cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
+    h, w = gray.shape[:2]
+    gray = gray[int(crop[1] * h):int(crop[3] * h), int(crop[0] * w):int(crop[2] * w)]
+    h, w = gray.shape[:2]
+    left, right = ((gray[:, :w // 2], gray[:, w // 2:w // 2 * 2]) if stereo == "side_by_side"
+                   else (gray[:h // 2], gray[h // 2:h // 2 * 2]))
+    k = min(1.0, ALIGN_WIDTH / left.shape[1])
+    left, right = (np.ascontiguousarray(cv2.resize(e, None, fx=k, fy=k, interpolation=cv2.INTER_AREA))
+                   for e in (left, right))
+    orb = cv2.ORB_create(4000)
+    kl, dl = orb.detectAndCompute(left, None)
+    kr, dr = orb.detectAndCompute(right, None)
+    if dl is None or dr is None:
+        raise ValueError("no details to compare")
+    matches = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(dr, dl)
+    if len(matches) < 12:
+        raise ValueError("too few details match")
+    pr = np.float32([kr[m.queryIdx].pt for m in matches])
+    pl = np.float32([kl[m.trainIdx].pt for m in matches])
+    # (3D pictures differ left-right by depth on purpose: only up-down, turn and size are errors - so the fit
+    # is done on the up-down part, with a turn / size that's the same everywhere)
+    m, inliers = cv2.estimateAffinePartial2D(pr, pl, method=cv2.RANSAC, ransacReprojThreshold=4.0)
+    if m is None or inliers is None or inliers.sum() < 10:
+        raise ValueError("the eyes' pictures don't match")
+    scale = float(np.hypot(m[0, 0], m[1, 0]))
+    turn = float(np.degrees(np.arctan2(m[1, 0], m[0, 0])))
+    cx, cy = left.shape[1] / 2, left.shape[0] / 2
+    dy = float(m[1, 0] * cx + m[1, 1] * cy + m[1, 2] - cy) / k
+    return dy, turn, scale, left.shape[1] / k, int(inliers.sum())
 
 
 def is_browser_video(exe, title):
@@ -202,16 +241,24 @@ class PhotoPlayer:
     MAX_FRAMES = 1000
     MAX_BYTES = 600 * 1024 * 1024        # animations bigger than this play only their first part
 
-    def __init__(self, path):
+    def __init__(self, path, turns=0):
         self._image, self._sent = None, False
+        self.turns = turns % 4                  # quarter turns to the right (the photo's Turn buttons)
         self._frames, self._times = [], []      # animated: BGRA frames, and when each one ends (s)
         self._start, self._shown = None, -1
         threading.Thread(target=self._load, args=(path,), daemon=True, name="photo").start()
 
-    @staticmethod
-    def _bgra(image):
+    def _bgra(self, image):
         rgba = np.asarray(image.convert("RGBA"))
-        return np.ascontiguousarray(rgba[..., [2, 1, 0, 3]])   # BGRA, like a window's picture
+        return np.ascontiguousarray(np.rot90(rgba[..., [2, 1, 0, 3]], -self.turns))   # BGRA, like a window's
+
+    def turn(self, step):
+        """A quarter turn right (+1) or left (-1): shown turned from the next frame on."""
+        self.turns = (self.turns + step) % 4
+        if self._image is not None:
+            self._image = np.ascontiguousarray(np.rot90(self._image, -step))
+        self._frames = [np.ascontiguousarray(np.rot90(f, -step)) for f in self._frames]
+        self._sent, self._shown = False, -1
 
     def _load(self, path):
         from PIL import Image
@@ -287,7 +334,7 @@ class ImmersiveVideo:
         self.front_yaw = shell.look_yaw          # the video's front is where you looked when it started
         self.look_from = [0.0, 0.0]              # 3D photo: seen from the side (parts of its distance: right, up)
         if self.photo:
-            self.player = PhotoPlayer(info.opener or info.video_url)
+            self.player = PhotoPlayer(info.opener or info.video_url, self._saved_turns(info))
         elif self.window:
             self.player = WindowPlayer(hwnd, shell.media)
         else:
@@ -306,6 +353,9 @@ class ImmersiveVideo:
         self._unmuted = None                     # the volume before Mute
         self._next_photo = None                  # Previous / Next: the picture's VideoInfo, read in the background
         self.grab = _VideoGrab(self)             # the pointer's target for presses on nothing
+        self._last_frame = None                  # what's shown now (Auto-align looks at it)
+        self.align_note = ""                     # what Auto-align found
+        self._load_eyes()
         if self.window:
             threading.Thread(target=self._watch_window, daemon=True, name="vr-video-window").start()
 
@@ -443,6 +493,29 @@ class ImmersiveVideo:
             return None
         return album.index(self.info.video_url), len(album)
 
+    @staticmethod
+    def _turn_key(info):
+        return files.turn_key(info.video_url)
+
+    def _saved_turns(self, info):
+        return self.shell.settings().photo_turns.get(self._turn_key(info), 0)
+
+    def turn_photo(self, step):
+        """Turn the photo a quarter right (+1) or left (-1); remembered for it (not in private mode, not a
+        photo from a locked room's safe)."""
+        self.player.turn(step)
+        self.depth_job.reset()                 # (its depth is worked out again, turned)
+        self.depth.size = None
+        s = self.shell.settings()
+        if not s.private_mode and self.info.opener is None:
+            turns = dict(s.photo_turns)
+            key = self._turn_key(self.info)
+            if self.player.turns:
+                turns[key] = self.player.turns
+            else:
+                turns.pop(key, None)
+            self.shell.store.update(photo_turns=turns)
+
     def step_photo(self, step):
         """Previous / next picture, read in the background and shown where this one is."""
         place = self.album_place()
@@ -462,10 +535,74 @@ class ImmersiveVideo:
         threading.Thread(target=read, daemon=True, name="photo-step").start()
 
     def set_value(self, key, value):
-        """A video setting (saved: the next video starts with it too)."""
+        """A video setting (saved: the next video starts with it too - except the eyes' settings, which each
+        3D video keeps for itself)."""
         self.shell.store.update(**{key: clamp(key, value) if key in LIMITS else value})
         if key == "video_volume":
             self.player.volume = value
+        if key in EYE_KEYS:
+            self._save_eyes()
+
+    # -- each video's own eye settings ---------------------------------------------------------------
+    def _eye_key(self):
+        return files.turn_key(self.info.key)     # (scrambled: settings.json doesn't list what you watched)
+
+    def _load_eyes(self):
+        """This video's eye settings (lined up before), or all at zero for one not tuned yet."""
+        saved = self.shell.settings().eye_tuning.get(self._eye_key(), {})
+        self.shell.store.update(**{k: float(saved.get(k, 0.0)) for k in EYE_KEYS})
+
+    def _save_eyes(self):
+        s = self.shell.settings()
+        if s.private_mode or self.info.opener is not None:     # (private / from a locked room's safe: not kept)
+            return
+        tuning = dict(s.eye_tuning)
+        values = {k: getattr(s, k) for k in EYE_KEYS if abs(getattr(s, k)) > 1e-6}
+        if values:
+            tuning[self._eye_key()] = values
+        else:
+            tuning.pop(self._eye_key(), None)
+        self.shell.store.update(eye_tuning=tuning)
+
+    def auto_align(self):
+        """Line the eyes up by themselves: compares the two eyes' pictures of what's shown now (matching
+        details) and sets Eye height, Eye turn and Eye size so they lie on top of each other. IPD (how deep)
+        is left as it is - that's taste."""
+        frame, stereo = self._last_frame, self.stereo
+        crop = getattr(self.player, "crop", (0.0, 0.0, 1.0, 1.0))
+        if frame is None or stereo == "mono":
+            self.align_note = "Auto-align is for 3D videos (side by side / top and bottom)"
+            return
+        self.align_note = "Lining up the eyes..."
+
+        def work():
+            try:
+                result = measure_eyes(frame, stereo, crop)
+                dy_degrees = result[0] * self._degrees_per_px(result[3])
+                self.shell.later(lambda: self._aligned(dy_degrees, result[1], result[2], result[4]))
+            except ValueError as e:
+                self.align_note = f"Couldn't line up: {e} - try a moment with more detail"
+            except Exception:
+                from ..core.log import log_error
+                log_error("auto-align eyes")
+                self.align_note = "Auto-align didn't work (see psvr-screen.log)"
+
+        threading.Thread(target=work, daemon=True, name="eye-align").start()
+
+    def _degrees_per_px(self, eye_width):
+        s = self.shell.settings()
+        across = {"equi": 360.0, "equi180": 180.0, "fisheye": self.fov or 190.0, "mesh": 90.0 * 3,
+                  "screen": s.video_screen_degrees}.get(self.projection, 180.0)
+        return across / max(eye_width, 1)
+
+    def _aligned(self, dy_degrees, turn, scale, found):
+        """Auto-align's answer: what the right eye's picture is off by, against the left one's - undone here."""
+        s = self.shell.settings()
+        self.set_value("video_eye_height", s.video_eye_height + ALIGN_SIGNS[0] * dy_degrees)
+        self.set_value("video_eye_roll", s.video_eye_roll + ALIGN_SIGNS[1] * turn)
+        self.set_value("video_eye_scale", s.video_eye_scale + ALIGN_SIGNS[2] * (scale - 1.0))
+        self.align_note = (f"Lined up ({found} matching details): height {dy_degrees:+.2f}°, turn {turn:+.2f}°, "
+                           f"size {100 * (scale - 1):+.1f}%")
 
     def place(self, right, forward):
         """Move yourself to this spot of the dome map (parts of the radius)."""
@@ -480,20 +617,23 @@ class ImmersiveVideo:
     def reset_settings(self):
         self.shell.store.update(**VIDEO_DEFAULTS)
         self.player.volume = VIDEO_DEFAULTS["video_volume"]
+        self._save_eyes()                      # (this video's eyes back to zero too)
 
     # -- every frame ---------------------------------------------------------------------------------
     def surfaces(self, now):
         if self._next_photo is not None:   # the next picture is read: show it (same place around you)
             info, self._next_photo = self._next_photo, None
             self.player.close()
-            self.info, self.player = info, PhotoPlayer(info.opener or info.video_url)
+            self.info, self.player = info, PhotoPlayer(info.opener or info.video_url, self._saved_turns(info))
             self.projection, self.stereo, self.fov = info.projection or "screen", info.stereo or "mono", info.fov
             self.depth_job.reset()
             self.depth.size = None
             self._room_state = ""
+            self._load_eyes()
         s = self.shell.settings()
         frame = self.player.frame()
         if frame is not None:
+            self._last_frame = frame
             if self.window or self.photo:
                 self.texture.upload_bgra(frame)
             else:
@@ -502,7 +642,7 @@ class ImmersiveVideo:
                     self.depth_job.video_frame(frame)
         if self.photo and self.photo_depth_on(s) and self.player._image is not None:
             self.depth_job.photo(self.info.video_url, self.player._image,
-                                 s.private_mode or self.info.opener is not None)   # (a safe's photo: nothing on disk)
+                                 s.private_mode or self.info.opener is not None, self.player.turns)   # (a safe's photo: nothing on disk)
         made = self.depth_job.result()
         if made is not None:
             self.depth.upload(made)
@@ -519,6 +659,8 @@ class ImmersiveVideo:
                              "contrast": s.video_contrast, "saturation": s.video_saturation,
                              "ipd": s.video_ipd if self.stereo != "mono" or depth_shown else 0.0,
                              "eye_height": s.video_eye_height if self.stereo != "mono" or depth_shown else 0.0,
+                             "eye_roll": s.video_eye_roll if self.stereo != "mono" else 0.0,
+                             "eye_scale": s.video_eye_scale if self.stereo != "mono" else 0.0,
                              "move_away": s.video_move_away,
                              "place": (s.video_place_right, s.video_place_up, s.video_place_forward),
                              "fov": self.fov, "crop": getattr(self.player, "crop", (0.0, 0.0, 1.0, 1.0)),
@@ -695,6 +837,9 @@ class Controls(View):
                       chip("living", "Living", Icon.STAR, v.toggle_living, s.photo_living and s.photo_depth != "off"),
                       Spacer(w=12)]
         status = v.depth_status() if v.flat() and s.photo_depth != "off" else ""
+        if v.flat():
+            items += [chip("turn:left", "Turn left", None, lambda: v.turn_photo(-1)),
+                      chip("turn:right", "Turn right", None, lambda: v.turn_photo(1)), Spacer(w=12)]
         items += [chip("room", room, Icon.HOME, v.make_room, v._room_state == "done"),
                   Label(status or ("Drag empty space to look around" if not v.flat() else ""), size=theme.SMALL - 8,
                         color=theme.ACCENT_LIGHT if status else theme.MUTED, h=small, flex=1, indent=12)]
@@ -790,10 +935,16 @@ class VideoSettings(View):
                          slider("video_screen_curve", "Curve", "{:.0f}%", 100)]
             else:
                 rows += [slider("video_size", "Size (zoom)", "{:.2f}x")]
-            eye_rows = [slider("video_ipd", "IPD (depth)", "{:+.1f}°"),
+            eye_rows = [slider("video_ipd", "IPD (depth)", "{:+.2f}°"),
                         hint("IPD = how far the 3D feels:  ←  closer, bigger      farther, smaller  →"),
                         slider("video_eye_height", "Eye height", "{:+.2f}°"),
-                        hint("Eye height: if the 3D looks double up / down, line its eyes up here")]
+                        slider("video_eye_roll", "Eye turn", "{:+.2f}°"),
+                        slider("video_eye_scale", "Eye size", "{:+.1f}%", 100),
+                        Row([Spacer(w=24), Button("auto-align", "Auto-align eyes", Icon.EYE, h=theme.ROW - 10,
+                                                  style="primary", size=theme.TEXT - 8, on_click=v.auto_align),
+                             Label(v.align_note or "Lines the eyes up by itself. Saved for this video.",
+                                   size=theme.SMALL - 8, color=theme.MUTED,
+                                   h=theme.ROW - 10, flex=1, indent=12)], w=w, h=theme.ROW - 6, gap=6)]
             if v.stereo != "mono":
                 rows += eye_rows
             elif v.flat() and v.photo:

@@ -62,6 +62,8 @@ uniform float contrast;
 uniform float saturation;
 uniform float separation; // radians the eyes' pictures are turned apart (+ = farther)
 uniform float eye_height; // radians the left eye's picture is raised over the right one's
+uniform float eye_roll;   // radians the eyes' pictures are turned against each other
+uniform float eye_scale;  // how much bigger the left eye's picture is than the right one's (part)
 uniform sampler2D tex_depth;  // AI depth of a flat picture / video: 1 = near, 0 = far (ai/depth.py)
 uniform int has_depth;
 uniform float depth_amount;   // how deep: a part at depth z (vs the middle) seems exp(-1.2 * amount * z) as far
@@ -134,6 +136,9 @@ void main() {
     d = vec3(d.x * cos(turn) + d.z * sin(turn), d.y, -d.x * sin(turn) + d.z * cos(turn));
     float lift = (eye == 0 ? -0.5 : 0.5) * eye_height;
     d = vec3(d.x, d.y * cos(lift) - d.z * sin(lift), d.y * sin(lift) + d.z * cos(lift));
+    float roll = (eye == 0 ? 0.5 : -0.5) * eye_roll;
+    d = vec3(d.x * cos(roll) - d.y * sin(roll), d.x * sin(roll) + d.y * cos(roll), d.z);
+    float zoom = 1.0 + (eye == 0 ? 0.5 : -0.5) * eye_scale;
     vec2 uv;
     float lon = atan(d.x, d.z), lat = asin(clamp(d.y, -1.0, 1.0));
     float edge = 1.0;                     // "inside": outside the picture it fades away softly
@@ -149,13 +154,15 @@ void main() {
         return;
     }
     if (projection != 3) {                // size: angles shrink as the video grows
-        lon /= size; lat /= size;
+        lon /= size * zoom; lat /= size * zoom;
         if (abs(lon) > PI || abs(lat) > PI * 0.5) { color = BLACK * opacity; return; }
         d = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
     }
     if (projection == 3) {               // a flat screen: the eyes' pictures slide apart / up and down instead
         vec2 slide = vec2(turn / picture_angle, lift / (picture_angle * eye_aspect));
-        uv = clamp(with_depth(v_uv + slide), 0.001, 0.999);
+        vec2 c = (v_uv - 0.5) * vec2(1.0, eye_aspect);     // turned and sized about the picture's middle
+        c = vec2(c.x * cos(roll) + c.y * sin(roll), -c.x * sin(roll) + c.y * cos(roll)) / zoom;
+        uv = clamp(with_depth(c / vec2(1.0, eye_aspect) + 0.5 + slide), 0.001, 0.999);
     } else if (projection == 4) {
         float theta = acos(clamp(d.z, -1.0, 1.0));
         if (theta > fisheye_fov * 0.5) { color = BLACK * opacity; return; }
@@ -356,6 +363,8 @@ class VideoSphere:
         prog.float("saturation", data.get("saturation", 1.0))
         prog.float("separation", float(np.radians(data.get("ipd", 0.0))))
         prog.float("eye_height", float(np.radians(data.get("eye_height", 0.0))))
+        prog.float("eye_roll", float(np.radians(data.get("eye_roll", 0.0))))
+        prog.float("eye_scale", float(data.get("eye_scale", 0.0)))
         depth = data.get("depth")
         has_depth = depth is not None and depth.ready and data.get("stereo", "mono") == "mono"
         prog.int("has_depth", 1 if has_depth else 0)

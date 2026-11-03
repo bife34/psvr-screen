@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..core.log import log_error
+from ..core.log import log_error, log_note
 from ..core.paths import DATA_DIR
 from . import models
 
@@ -183,9 +183,14 @@ class Indexer(threading.Thread):
                 for p in batch:
                     try:
                         read.append((p, *_read(p)))
-                    except Exception:
-                        log_error(f"AI look at {Path(p).name}")
-                        self._asked.discard((p, private))
+                    except Exception as e:
+                        # (a damaged file: kept as "nothing seen", so it isn't read again every time)
+                        log_note(f"[AI] can't read {Path(p).name}: {str(e)[:80]}")
+                        try:
+                            store(private).put(Record(p, vector=None, date=os.path.getmtime(p), place="",
+                                                      gps=None, faces=[]))
+                        except Exception:
+                            self._asked.discard((p, private))
                 try:
                     vectors = clip.images([r[1] for r in read])
                 except Exception:

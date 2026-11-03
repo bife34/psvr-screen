@@ -14,11 +14,13 @@ from ..core.log import log_error
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
-from ..ui.widgets import Button, Label, Panel, Row, Spacer
+from ..ui.widgets import Button, Grid, Label, Panel, Row, Slider, Spacer
 from .dialogs import DIALOG_DISTANCE
 
-ROOM_KEYS = ("panels", "selected", "environment", "environment_brightness", "environment_turn", "layout")
+ROOM_KEYS = ("panels", "selected", "environment", "environment_brightness", "environment_turn", "layout",
+             "room_layout", "dock_yaw", "dock_pitch", "dock_distance")
 ROOM_NAMES = ("Work", "Cinema", "Photos", "Games", "Relax", "Studio")
+MORE_NAMES = ("Main room", "Reading", "Music", "Night", "Space", "Office", "Lounge", "Gallery")
 SECRET_TAPS, SECRET_SECONDS = 3, 1.5      # taps on the dock's clock that open the keypad
 FAILS_BEFORE_WAIT, WAIT_SECONDS = 5, 30   # wrong codes in a row, then the keypad waits
 PIN_MIN, PIN_MAX = 4, 12
@@ -86,6 +88,20 @@ class Rooms:
         self.shell.store.update(rooms=self.shell.store.get().rooms + [room])
         self._load(room)
         self.shell.toast(f"New room: {name}")
+
+    def rename(self, name):
+        """The room you're in gets this name."""
+        if self.secret:
+            self.secret = (self.secret[0], self.secret[1], name)
+            return
+        s = self.shell.store.get()
+        self.shell.store.update(rooms=[dict(r, name=name) if r["id"] == s.current_room else r for r in s.rooms])
+
+    def names_free(self):
+        """Names you can give the room you're in (not one another room has)."""
+        s = self.shell.settings()
+        taken = {r["name"] for r in s.rooms if r["id"] != s.current_room}
+        return [n for n in ROOM_NAMES + MORE_NAMES if n not in taken]
 
     def delete_room(self, room_id):
         s = self.shell.settings()
@@ -289,3 +305,92 @@ class RecoveryKey(View):
                       Row([Spacer(flex=1), Button("recovery:ok", "I wrote it down", Icon.PIN, h=theme.ROW,
                                                   style="primary", size=theme.TEXT - 4,
                                                   on_click=self.shell.close_dialog)], w=w)], pad=36, gap=12)
+
+
+DESIGNER_WIDTH = 1500
+
+
+class RoomDesigner(View):
+    """Design this room: its name, its surroundings, and how its windows stand - arranged in one press (around
+    you, a wall, a cinema), and remembered so they can be put back after moving things around. Everything here
+    belongs to this room only (switching rooms brings each one's own back)."""
+
+    def __init__(self, shell):
+        super().__init__(distance=DIALOG_DISTANCE)
+        self.shell = shell
+        self.naming = False
+        from ..render import environment
+        environment.warm_previews()
+
+    def state(self):
+        s = self.shell.settings()
+        return (self.naming, self.shell.rooms.current_name(), s.environment, round(s.environment_brightness, 3),
+                round(s.environment_turn, 1), bool(s.room_layout), len(s.panels))
+
+    def _arrange(self, how):
+        from . import workspace
+        s = self.shell.store.get()
+        panels = workspace.arrange(s.panels, how, self.shell.aspects, s.selected)
+        self.shell.store.update(panels=panels, selected=s.selected)
+        self.shell.toast({"around": "Around you", "wall": "Wall", "cinema": "Cinema"}[how])
+
+    def _remember(self):
+        from . import workspace
+        self.shell.store.update(room_layout=workspace.layout_of(self.shell.store.get().panels))
+        self.shell.toast("Room remembered")
+
+    def _put_back(self):
+        from . import workspace
+        s = self.shell.store.get()
+        self.shell.store.update(panels=workspace.put_back(s.panels, s.room_layout), selected=s.selected)
+        self.shell.toast("Put back")
+
+    def _name(self, name):
+        self.shell.rooms.rename(name)
+        self.naming = False
+
+    def build(self):
+        from ..core.settings import LIMITS
+        from .dialogs import _environment_cards
+        s, store, w = self.shell.settings(), self.shell.store, DESIGNER_WIDTH
+        small = theme.SMALL - 4
+        title = lambda text: Label(text, size=theme.SMALL, color=theme.ACCENT_LIGHT, w=w, h=theme.ROW - 14, indent=24)
+        rows = [Row([Label("Design this room", size=theme.TITLE, flex=1, indent=12),
+                     Button("design:name", self.shell.rooms.current_name(), Icon.HOME, h=theme.ROW - 8, style="normal", selected=self.naming, size=small,
+                            on_click=lambda: setattr(self, "naming", not self.naming)),
+                     Button("design:done", "Done", None, h=theme.ROW - 8,
+                            style="primary", size=small, on_click=self.shell.close_dialog)], w=w, gap=12)]
+        if self.naming:
+            names = self.shell.rooms.names_free()
+            rows += [title("Name"),
+                     Row([Spacer(w=24), Grid([Button("design:n:" + n, n, w=(w - 48 - 5 * 12) // 6, h=theme.ROW - 14,
+                                                     style="flat", size=small,
+                                                     selected=n == self.shell.rooms.current_name(),
+                                                     on_click=lambda n=n: self._name(n)) for n in names], 6)],
+                         w=w, align="start")]
+        rows += [title("Surroundings"), _environment_cards(self.shell, w)]
+        for key, label, fmt in (("environment_brightness", "Brightness", "{:.0%}"),
+                                ("environment_turn", "Turn the scene", "{:+.0f}°")):
+            lo, hi = LIMITS[key]
+            rows.append(Slider("design:" + key, label, getattr(s, key), lo, hi, fmt, w=w,
+                               on_change=lambda v, k=key: store.update(**{k: v})))
+        button = lambda key, text, icon, fn, style="normal": Button("design:" + key, text, icon, h=theme.ROW - 10,
+                                                                    style=style, size=small, on_click=fn)
+        no_windows = not s.panels
+        rows += [title("Windows"),
+                 Row([Spacer(w=24),
+                      button("around", "Around you", Icon.SPHERE, lambda: self._arrange("around")),
+                      button("wall", "Wall", Icon.MONITOR, lambda: self._arrange("wall")),
+                      button("cinema", "Cinema", Icon.VIDEO,
+                             lambda: self._arrange("cinema")),
+                      Spacer(flex=1),
+                      button("remember", "Remember", Icon.PINNED, self._remember, "flat"),
+                      *([button("putback", "Put back", Icon.BACK, self._put_back, "flat")] if s.room_layout else [])],
+                     w=w, gap=12),
+                 Label("No windows in this room yet - open some from Home." if no_windows else
+                       "Cinema: the selected window big and far, the others small at your sides. Pinned "
+                       "windows stay put.", size=theme.SMALL - 8, color=theme.MUTED, w=w,
+                       h=theme.ROW - 20, indent=24),
+                 Label("Each room keeps its own surroundings, windows and dock place.", size=theme.SMALL - 8,
+                       color=theme.MUTED, w=w, h=theme.ROW - 20, indent=24)]
+        return Panel(rows, pad=28, gap=8, align="start")

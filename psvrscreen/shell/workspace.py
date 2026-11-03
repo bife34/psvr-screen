@@ -193,3 +193,95 @@ def nudge_distance(store, window_id, delta):
         lo, hi = LIMITS["distance"]
         factor = 1 / WHEEL_DISTANCE_FACTOR if delta > 0 else WHEEL_DISTANCE_FACTOR
         store.update_window(window_id, distance=max(lo, min(hi, me["distance"] * factor)))
+
+
+# -- arranging a whole room (the room designer) -----------------------------------------------------
+ARRANGE_KEYS = ("yaw", "distance", "height", "width", "curvature", "tilt", "turn", "roll")
+AROUND_DISTANCE = (1.2, 3.0)    # "Around you": all at one distance, the windows' own (median), kept in this range
+AROUND_GAP_DEGREES = 3.0
+AROUND_MAX_DEGREES = 300.0      # windows around you leave a gap behind you
+WALL_MAX_DEGREES = (100.0, 60.0)  # the whole wall fits in this view (wide, high)
+WALL_DISTANCE, WALL_GAP = 2.4, 0.08      # "Wall": a grid in front of you, every window facing you (m)
+CINEMA_DISTANCE, CINEMA_WIDTH = 5.0, 7.0  # "Cinema": the selected window big and far (about 70 degrees)
+CINEMA_SIDE_YAW, CINEMA_SIDE_WIDTH = 62.0, 0.9   # the others: small, out to your sides
+
+
+def _movable(panels):
+    return [p for p in panels if not p.get("lock_position")]
+
+
+def arrange(panels, how, aspects, selected=0):
+    """New panels (copies) arranged "around" / "wall" / "cinema". Position-locked windows stay where they are.
+    `aspects`: window id -> picture height / width."""
+    panels = [dict(p) for p in panels]
+    free = _movable(panels)
+    if not free:
+        return panels
+    aspect = lambda p: aspects.get(p["id"], 9 / 16)
+    if how == "around":
+        free.sort(key=lambda p: clamp_angle(p["yaw"]))
+        distances = sorted(p["distance"] for p in free)
+        d = max(AROUND_DISTANCE[0], min(AROUND_DISTANCE[1], distances[len(distances) // 2]))
+        for p in free:                       # each keeps the size it looks to you
+            p["width"] *= d / max(p["distance"], 0.1)
+        halves = [math.degrees(math.atan(p["width"] / 2 / d)) for p in free]
+        total = sum(2 * h for h in halves) + AROUND_GAP_DEGREES * (len(free) - 1)
+        if total > AROUND_MAX_DEGREES:       # too many to fit around you: all a little smaller
+            k = (AROUND_MAX_DEGREES - AROUND_GAP_DEGREES * (len(free) - 1)) / (total - AROUND_GAP_DEGREES * (len(free) - 1))
+            for p in free:
+                p["width"] = 2 * d * math.tan(math.radians(math.degrees(math.atan(p["width"] / 2 / d)) * k))
+            halves = [math.degrees(math.atan(p["width"] / 2 / d)) for p in free]
+            total = sum(2 * h for h in halves) + AROUND_GAP_DEGREES * (len(free) - 1)
+        yaw = -total / 2
+        for p, h in zip(free, halves):
+            p.update(yaw=yaw + h, distance=d, height=0.0, tilt=0.0, turn=0.0, roll=0.0)
+            yaw += 2 * h + AROUND_GAP_DEGREES
+    elif how == "wall":
+        free.sort(key=lambda p: (-p["height"], clamp_angle(p["yaw"])))
+        for p in free:                       # each keeps the size it looks to you, at the wall's distance
+            p["width"] *= WALL_DISTANCE / max(p["distance"], 0.1)
+        columns = math.ceil(math.sqrt(len(free)))
+        rows = [free[i:i + columns] for i in range(0, len(free), columns)]
+        wall_w = max(sum(p["width"] for p in row) + WALL_GAP * (len(row) - 1) for row in rows)
+        wall_h = sum(max(p["width"] * aspect(p) for p in row) for row in rows) + WALL_GAP * (len(rows) - 1)
+        k = min(1.0, 2 * WALL_DISTANCE * math.tan(math.radians(WALL_MAX_DEGREES[0] / 2)) / wall_w,
+                2 * WALL_DISTANCE * math.tan(math.radians(WALL_MAX_DEGREES[1] / 2)) / wall_h)
+        for p in free:                       # the whole wall fits in front of you
+            p["width"] *= k
+        row_h = [max(p["width"] * aspect(p) for p in row) for row in rows]
+        y = (sum(row_h) + WALL_GAP * (len(rows) - 1)) / 2
+        for row, h in zip(rows, row_h):
+            x = -(sum(p["width"] for p in row) + WALL_GAP * (len(row) - 1)) / 2
+            for p in row:
+                middle = x + p["width"] / 2
+                p.update(yaw=math.degrees(math.atan2(middle, WALL_DISTANCE)), distance=math.hypot(middle, WALL_DISTANCE),
+                         height=y - h / 2, turn=0.0, tilt=0.0, roll=0.0, curvature=0.0)   # each still faces you
+                x += p["width"] + WALL_GAP
+            y -= h + WALL_GAP
+    elif how == "cinema":
+        main = panels[selected] if 0 <= selected < len(panels) and panels[selected] in free else free[0]
+        main.update(yaw=0.0, distance=CINEMA_DISTANCE, width=CINEMA_WIDTH, height=0.4, tilt=0.0, turn=0.0, roll=0.0)
+        side = 1
+        for i, p in enumerate(q for q in free if q is not main):
+            p.update(yaw=side * (CINEMA_SIDE_YAW + 16 * (i // 2)), distance=1.6, height=-0.1,
+                     width=min(p["width"], CINEMA_SIDE_WIDTH), tilt=0.0, turn=0.0, roll=0.0)
+            side = -side
+    for p in free:
+        for key in ARRANGE_KEYS:
+            if key in LIMITS:
+                p[key] = clamp(key, p[key])
+    return panels
+
+
+def layout_of(panels):
+    """Where every window is now (the room designer's "Remember"): window id -> its place and shape."""
+    return {p["id"]: {k: p[k] for k in ARRANGE_KEYS if k in p} for p in panels}
+
+
+def put_back(panels, layout):
+    """Windows back where `layout` remembered them (windows opened since then stay where they are)."""
+    panels = [dict(p) for p in panels]
+    for p in panels:
+        if p["id"] in layout and not p.get("lock_position"):
+            p.update(layout[p["id"]])
+    return panels

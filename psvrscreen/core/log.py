@@ -8,6 +8,15 @@ from .paths import DATA_DIR
 ERROR_LOG = str(DATA_DIR / "psvr-screen.log")
 
 
+def log_note(text):
+    """One line in the log (expected trouble, like a damaged photo - no traceback)."""
+    try:
+        with open(ERROR_LOG, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + text + "\n")
+    except OSError:
+        pass
+
+
 def log_error(where=""):
     """Call inside `except`: writes the error being handled."""
     try:

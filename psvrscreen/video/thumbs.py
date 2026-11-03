@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from ..core.log import log_error
+from ..core.log import log_error, log_note
 from . import files, recognize
 
 WIDTH = 480
@@ -57,12 +57,15 @@ class Thumbnails:
         self.private = False              # set by the app: no files written while private
         self._memory = collections.OrderedDict()   # path -> (image, duration seconds or None)
         self._asked = set()
+        self._failed = set()              # files that couldn't be read (until the app restarts)
         self._queue = queue.LifoQueue()   # newest asks first: what you're looking at now
         threading.Thread(target=self._work, daemon=True, name="thumbnails").start()
 
     def get(self, path):
         """(thumbnail or None, video duration or None)."""
         key = str(path)
+        if key in self._failed:          # a broken / unreadable file: asked once, not over and over
+            return None, None
         if key in self._memory:
             self._memory.move_to_end(key)
             return self._memory[key]
@@ -81,9 +84,14 @@ class Thumbnails:
             path = self._queue.get()
             try:
                 result = self._make(path)
+            except (OSError, ValueError) as e:     # (a damaged or unknown file: expected, one line)
+                log_note(f"[thumbnail] can't read {path.name}: {str(e)[:80]}")
+                result = None
+                self._failed.add(str(path))
             except Exception:
                 log_error(f"thumbnail {path.name}")
                 result = None
+                self._failed.add(str(path))
             self._asked.discard(str(path))
             if result is None:
                 continue

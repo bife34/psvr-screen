@@ -126,6 +126,9 @@ class Settings:
     video_roll: float = 0.0              # the video turned around straight ahead (a crooked horizon), degrees
     video_ipd: float = 0.0               # 3D: degrees the eyes' pictures are turned apart (+ = farther, smaller)
     video_eye_height: float = 0.0        # 3D: degrees the left eye's picture is raised over the right one's
+    video_eye_roll: float = 0.0          # 3D: degrees the eyes' pictures are turned against each other (roll)
+    video_eye_scale: float = 0.0         # 3D: how much bigger the left eye's picture is than the right one's (part)
+    eye_tuning: dict = field(default_factory=dict)   # each 3D video's own eye settings: scrambled name -> values
     video_contrast: float = 1.0
     video_saturation: float = 1.0
     # Where you are inside the video's dome, as parts of its radius (0 = the middle)
@@ -161,12 +164,14 @@ class Settings:
     pinned_folders: list = field(default_factory=list)   # Files: folders pinned to Places
     rooms: list = field(default_factory=list)   # your rooms (shell/rooms.py): {id, name, panels, ...}
     current_room: str = "home"
+    room_layout: dict = field(default_factory=dict)   # the room designer's "Remember": window id -> place
     smart_assistant: bool = True         # what isn't a plain command goes to the local AI (2.8 GB, once)
     talk_button: str = "r1"              # the DS4 button that opens the microphone: none / r1 / square / l3 / r3
     # Photos shown around you, made 3D by the AI (ai/depth.py)
     photo_depth: str = "off"             # "off", "3d" (the picture gets depth) or "inside" (you stand in it)
     photo_living: bool = False           # it moves gently (a slow 3D camera drift, far parts sway)
     photo_depth_amount: float = 1.0      # how deep (1 = natural)
+    photo_turns: dict = field(default_factory=dict)   # photos you turned: scrambled name -> quarter turns right
     video_ai_depth: bool = False         # flat 2D videos on a screen: made 3D by the AI while they play
 
 
@@ -191,7 +196,9 @@ LIMITS = {
     "lens_k2": (0.0, 0.6),
     "lens_apart": (-0.08, 0.08),
     "lens_height": (-0.05, 0.05),
-    "video_eye_height": (-3.0, 3.0),
+    "video_eye_height": (-6.0, 6.0),
+    "video_eye_roll": (-6.0, 6.0),
+    "video_eye_scale": (-0.08, 0.08),
     "video_screen_degrees": (30.0, 100.0),
     "video_size": (0.5, 1.5),
     "video_distance": (0.3, 300.0),

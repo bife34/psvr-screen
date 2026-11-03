@@ -18,7 +18,8 @@ for package in ("windows_capture", "libusb_package", "uiautomation", "sounddevic
 hiddenimports += collect_submodules("yt_dlp")
 
 a = Analysis([SPECPATH + "\\psvr_screen.py"], pathex=[ROOT], binaries=binaries, datas=datas,
-             hiddenimports=hiddenimports, excludes=["tkinter.test", "unittest", "pytest"])
+             hiddenimports=hiddenimports, excludes=["tkinter.test", "pytest", "hf_xet"])   # (not unittest: numpy.testing needs it; hf_xet: an optional
+             # download helper Smart App Control blocks, and the app downloads its models itself)
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="PSVR Screen", icon=SPECPATH + "\\psvr_screen.ico",
           console=False, version=None)

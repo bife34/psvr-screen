@@ -83,6 +83,7 @@ SETTINGS_SECTIONS = [
     ]),
 ]
 SECTION_WIDTH = 380
+YOURS_GREEN = (52, 168, 83, 255)   # the badge on surroundings made from your own pictures
 
 
 class GlobalSettings(View):
@@ -146,7 +147,7 @@ class GlobalSettings(View):
                                             selected=recording, size=theme.SMALL - 4,
                                             on_click=lambda a=action: self._record(a))], w=w, h=theme.ROW - 8))
             elif kind == "environments":
-                rows.append(_environment_cards(s, store, w))
+                rows.append(_environment_cards(self.shell, w))
             elif kind == "choice":
                 rows.append(Row([Label(label, size=theme.TEXT - 4, flex=1, indent=24)] +
                                 [Button(f"choice:{key}:{value}", text, h=theme.ROW - 12, style="flat",
@@ -165,17 +166,27 @@ class GlobalSettings(View):
                      gap=24, align="start")
 
 
-def _environment_cards(s, store, w):
+def _environment_cards(shell, w):
+    """The surroundings to pick from: the dark room, the scenes, your own pictures (right click: Remove) and
+    "Your picture" (any photo of yours becomes one)."""
+    s, store = shell.settings(), shell.store
     names = [""] + environment.names()
-    columns = max(4, -(-len(names) // 2))      # two rows, so the sliders below stay in view
+    columns = max(4, -(-(len(names) + 1) // 2))      # two rows, so the sliders below stay in view
     card_w = (w - 48 - (columns - 1) * theme.GAP * 2) // columns
     card_h = card_w // 2 + int(theme.SMALL * 1.6)
     cards = []
     for name in names:
-        on = [("On", theme.ACCENT)] if name == s.environment else []
+        mine = bool(name) and environment.is_mine(name)
+        badges = (([("On", theme.ACCENT)] if name == s.environment else [])
+                  + ([("Yours", YOURS_GREEN)] if mine else []))
+        menu = (lambda name=name: shell.open_menu(name, [
+            ("Use it", Icon.SPHERE, lambda: store.update(environment=name), "flat"),
+            ("Remove", Icon.CLOSE, lambda: shell.forget_surroundings(name), "danger")])) if mine else None
         cards.append(Card("env:" + name, name or "Dark room", environment.preview(name) if name else None,
-                          card_w, card_h, badges=on, icon=Icon.SPHERE,
+                          card_w, card_h, badges=badges, icon=Icon.SPHERE, on_right=menu,
                           on_click=lambda name=name: store.update(environment=name)))
+    cards.append(Card("env:+mine", "Your picture", None, card_w, card_h, icon=Icon.ADD,
+                      on_click=shell.pick_surroundings))
     return Row([Spacer(w=24), Grid(cards, columns)], w=w, align="start")
 
 

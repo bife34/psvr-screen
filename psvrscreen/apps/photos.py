@@ -77,7 +77,8 @@ class PhotosPage(Library):
                     image.draft("RGB", (VIEW_SIZE, VIEW_SIZE))
                     image = image.convert("RGB")
                     image.thumbnail((VIEW_SIZE, VIEW_SIZE))
-                self.big = (path, image)
+                turns = self.host.settings().photo_turns.get(files.turn_key(path), 0)
+                self.big = (path, image.rotate(-90 * turns, expand=True) if turns else image)
             except Exception:
                 self.big = (path, None)
 
@@ -90,12 +91,27 @@ class PhotosPage(Library):
             self.viewing = (self.viewing + step) % len(pictures)
             self._load_big(pictures[self.viewing])
 
+    def _turn(self, step):
+        """Turn the photo a quarter right (+1) / left (-1); remembered for it (not in private mode or the safe)."""
+        if not self.big or self.big[1] is None:
+            return
+        path, image = self.big
+        self.big = (path, image.rotate(-90 * step, expand=True))
+        if not self._private() and not files.in_vault(path):
+            turns = dict(self.host.settings().photo_turns)
+            key = files.turn_key(path)
+            turns[key] = (turns.get(key, 0) + step) % 4
+            if not turns[key]:
+                del turns[key]
+            self.host.set_setting("photo_turns", turns)
+        self._turned = getattr(self, "_turned", 0) + 1      # (redraw)
+
     def _close(self):
         self.viewing, self.big = None, None
 
     def state(self):
         big = self.big[0] if self.big else None
-        return super().state() + (self.viewing, str(big))
+        return super().state() + (self.viewing, str(big), getattr(self, "_turned", 0))
 
     def build(self):
         pictures = self.pictures()
@@ -109,6 +125,10 @@ class PhotosPage(Library):
         header = Row([Button("back", self.BACK_LABEL, Icon.BACK, h=h, style="normal", size=theme.TEXT - 6,
                              on_click=self._close),
                       Label(name, size=theme.TEXT - 4, flex=1, h=h, indent=16),
+                      Button("turn-left", "Turn left", None, h=h, style="flat", size=theme.TEXT - 6,
+                             on_click=lambda: self._turn(-1)),
+                      Button("turn-right", "Turn right", None, h=h, style="flat", size=theme.TEXT - 6,
+                             on_click=lambda: self._turn(1)),
                       Label(f"{self.viewing + 1} / {len(pictures)}", size=theme.SMALL, color=theme.MUTED, h=h)],
                      w=w, h=int(h * 1.4), gap=12)
         footer = Row([Button("prev", "Previous", Icon.PREVIOUS, h=h, style="normal", size=theme.TEXT - 6,

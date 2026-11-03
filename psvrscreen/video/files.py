@@ -53,6 +53,13 @@ def in_vault(path):
     return isinstance(path, VaultPath)
 
 
+def turn_key(path):
+    """A photo's name for remembering how it's turned (settings.photo_turns): scrambled, so the settings file
+    doesn't list what you looked at."""
+    import hashlib
+    return hashlib.sha1(str(path).encode("utf-8", "ignore")).hexdigest()[:16]
+
+
 def source(path):
     """What Pillow / PyAV open: the file's path - or, for a file in a locked room's safe, a new file object that
     decrypts it as it's read (nothing readable is written anywhere)."""

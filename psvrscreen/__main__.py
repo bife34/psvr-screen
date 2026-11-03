@@ -54,8 +54,19 @@ def _restart():
 
 
 def main():
+    if "--check" in sys.argv:            # loads everything, writes selfcheck.txt, ends (see selfcheck.py)
+        from . import selfcheck
+        os._exit(selfcheck.run())
+    from PIL import ImageFile
+    ImageFile.LOAD_TRUNCATED_IMAGES = True   # photos cut short (interrupted copies): what's there, not an error
+    # Threads take turns on Python's lock every 1 ms instead of 5: the render thread (90 frames a second) never
+    # waits long behind a busy one (a page drawing in the background, thumbnails, the AI).
+    sys.setswitchinterval(0.001)
     # Real pixel coordinates on every monitor (the VR monitor uses its own scaling); must come before any window.
     ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))   # per-monitor aware v2
+    from . import first_run
+    if first_run.needed():                # the downloadable package's first start: shortcuts, VR monitors driver
+        first_run.show()
     displays.turn_on_virtual_monitors()   # they only exist while the app runs (see the end)
     store = SettingsStore.load()
     engine = DirectEngine(store) if store.get().engine == "direct" else VREngine(store)

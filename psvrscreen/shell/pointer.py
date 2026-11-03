@@ -106,6 +106,10 @@ class Pointer:
     def move(self, dx, dy):
         self._events.put(("move", dx, dy))
 
+    def holds(self, name):
+        """The controller's button `name` is held down in VR."""
+        return name in self._pad_buttons
+
     def button(self, name, down):
         (self._pad_buttons.add if down else self._pad_buttons.discard)(name)
         self._events.put(("button", name, down, False))

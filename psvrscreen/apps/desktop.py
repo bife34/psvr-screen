@@ -11,6 +11,7 @@ The VR monitor's high scaling makes apps draw big letters that are then smoothly
 """
 import ctypes
 import math
+import time
 
 from ..core import geometry
 from ..core.settings import new_panel
@@ -54,6 +55,7 @@ def new_panel_for(hwnd, title, exe):
 
 
 HIDDEN_SECONDS = 1.5
+CAPTURE_RETRY_SECONDS, CAPTURE_TRIES = 2.0, 5   # a window Windows won't capture yet: tried again, then let go
 
 
 def new_game_panel(hwnd, title, exe):
@@ -106,6 +108,7 @@ class DesktopWindow(Content):
             self.closed = True
             return
         self._capture = WindowCapture(hwnd)
+        self._capture_tries, self._capture_at = 1, time.monotonic()
 
     @property
     def texture(self):
@@ -118,6 +121,13 @@ class DesktopWindow(Content):
     # -- every frame -------------------------------------------------------------------------------
     def update(self, panel, now):
         if self.closed:
+            return
+        if self._capture.failed:      # (minimized, still opening...): again in a moment, a few times
+            if not windows.is_alive(self.hwnd) or self._capture_tries >= CAPTURE_TRIES:
+                self.closed = True
+            elif now - self._capture_at > CAPTURE_RETRY_SECONDS:
+                self._capture = WindowCapture(self.hwnd)
+                self._capture_tries, self._capture_at = self._capture_tries + 1, now
             return
         if self._capture.closed or not windows.is_alive(self.hwnd):
             self.closed = True

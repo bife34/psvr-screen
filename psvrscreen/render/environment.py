@@ -59,6 +59,12 @@ def names():
     return sorted(found)
 
 
+def is_mine(name):
+    """One made from your own picture (can be removed), not one of the app's scenes."""
+    path = path_of(name)
+    return path is not None and path.parent == MINE
+
+
 def path_of(name):
     for folder in (MINE, FOLDER):
         found = next((p for p in folder.glob(glob_escape(name) + ".*") if p.suffix.lower() in EXTENSIONS), None)

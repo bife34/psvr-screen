@@ -96,6 +96,18 @@ class GamepadMouse(threading.Thread):
     def stop(self):
         self._stop_event.set()
 
+    def _let_go(self, name, held):
+        """Release a pad button where it was pressed: the VR pointer if it holds it, else Windows. Returns False
+        (not held any more)."""
+        if not held:
+            return False
+        pointer = getattr(self.engine, "pointer", None)
+        if pointer is not None and pointer.holds(name):
+            pointer.button(name, False)
+        else:
+            _mouse(MOUSEEVENTF_LEFTUP if name == "left" else MOUSEEVENTF_RIGHTUP)
+        return False
+
     def run(self):
         if self._xinput is None:
             self.status = "XInput not available"
@@ -117,6 +129,10 @@ class GamepadMouse(threading.Thread):
                 if direct is None:
                     self.status = "No controller found (connect the DS4 or an Xbox controller)"
                     prev = 0
+                    # it went away (Bluetooth drop, low battery) maybe mid-press: let go of what it held, or
+                    # the VR pointer keeps "holding" it and drags whatever was pressed as you move
+                    left_down = self._let_go("left", left_down)
+                    right_down = self._let_go("right", right_down)
                     continue
                 g = state.Gamepad                         # the DS4 read directly, in the same layout
                 (g.wButtons, g.bLeftTrigger, g.bRightTrigger, g.sThumbLX, g.sThumbLY, g.sThumbRX,
@@ -149,12 +165,8 @@ class GamepadMouse(threading.Thread):
                 self.status = f"Controller {pad_index + 1} connected - mouse {'ON' if s.gamepad_mouse else 'OFF'}"
 
             if not s.gamepad_mouse or in_game:
-                if left_down:
-                    _mouse(MOUSEEVENTF_LEFTUP)
-                    left_down = False
-                if right_down:
-                    _mouse(MOUSEEVENTF_RIGHTUP)
-                    right_down = False
+                left_down = self._let_go("left", left_down)
+                right_down = self._let_go("right", right_down)
                 prev = buttons
                 continue
 
@@ -194,17 +206,23 @@ class GamepadMouse(threading.Thread):
             want_left = bool(buttons & BTN_A) or g.bRightTrigger > TRIGGER_THRESHOLD
             want_right = bool(buttons & BTN_B) or g.bLeftTrigger > TRIGGER_THRESHOLD
             if want_left != left_down:
-                if vr:
-                    pointer.button("left", want_left)
+                if not want_left:
+                    left_down = self._let_go("left", True)        # (where it was pressed: VR or Windows)
                 else:
-                    _mouse(MOUSEEVENTF_LEFTDOWN if want_left else MOUSEEVENTF_LEFTUP)
-                left_down = want_left
+                    if vr:
+                        pointer.button("left", True)
+                    else:
+                        _mouse(MOUSEEVENTF_LEFTDOWN)
+                    left_down = True
             if want_right != right_down:
-                if vr:
-                    pointer.button("right", want_right)
+                if not want_right:
+                    right_down = self._let_go("right", True)
                 else:
-                    _mouse(MOUSEEVENTF_RIGHTDOWN if want_right else MOUSEEVENTF_RIGHTUP)
-                right_down = want_right
+                    if vr:
+                        pointer.button("right", True)
+                    else:
+                        _mouse(MOUSEEVENTF_RIGHTDOWN)
+                    right_down = True
 
             # Screen controls
             if pressed & BTN_Y:

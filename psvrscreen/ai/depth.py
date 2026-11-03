@@ -32,17 +32,17 @@ def estimate(rgb, long_side=PICTURE_SIDE):
     return np.clip((d - lo) / max(hi - lo, 1e-6), 0.0, 1.0).astype(np.float32)
 
 
-def _cache_file(path):
+def _cache_file(path, variant=""):
     stat = os.stat(path)
-    name = hashlib.sha1(f"{path}|{stat.st_size}|{stat.st_mtime}".encode("utf-8", "ignore")).hexdigest()
+    name = hashlib.sha1(f"{variant}{path}|{stat.st_size}|{stat.st_mtime}".encode("utf-8", "ignore")).hexdigest()
     return CACHE / f"{name}.png"
 
 
-def of_picture(path, rgb, private=False):
+def of_picture(path, rgb, private=False, variant=""):
     """A picture file's depth (kept on disk unless private)."""
     from PIL import Image
     try:
-        cached = _cache_file(path)
+        cached = _cache_file(path, variant)
         if cached.exists():
             return np.asarray(Image.open(cached), np.float32) / 65535.0
     except OSError:

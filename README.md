@@ -29,15 +29,29 @@ games.
   **timeline in space**; **memory rooms** (save a wall with its search, shape and surroundings).
 - **Voice commands** (offline, the headset's microphone): "galaxy", "next", "bigger", "show videos", "step
   inside", "exit"... The AI models (~800 MB) download once, the first time they're needed.
+- **Rooms**: separate spaces, each with its own windows, surroundings and dock place; a room designer
+  (arrange windows around you / as a wall / as a cinema, remember and put back). **Locked rooms** open with a
+  PIN and hold a **safe**: files encrypted in Cryptomator's format.
+- **Files, Photos, Videos** apps made for VR, and **Spotify** in VR (from Home).
 
 ## What you need
 
 1. A PSVR (PS4 version) with its processor box, connected by HDMI and USB, and Windows 10 / 11 (64-bit).
-2. The Virtual Display Driver (included in the installer).
+2. The Virtual Display Driver (included: installed on the first start).
 3. Optional: DS4Windows + ViGEmBus, only for the DS4 in non-Steam PC games.
 4. Optional, for VR games: Steam + SteamVR and iVRy (paid add-on on Steam).
 
-Download the installer (`PSVR-Screen-Setup-<version>.exe`): it explains each part and installs what you tick.
+## Install
+
+1. Download `PSVR-Screen-<version>.zip` from [Releases](https://github.com/bife34/psvr-screen/releases).
+2. Extract it (right click > Extract All) to a short path, for example `C:\PSVR Screen` or your Documents.
+3. Double-click **PSVR Screen.exe**. The first start sets up the Start menu / desktop shortcuts and the VR
+   monitors (Windows asks for permission once).
+
+Why a zip and no installer: Windows 11's **Smart App Control** (on by default on new PCs) blocks unsigned
+programs and installers. PSVR Screen.exe is Python's own program (signed by the Python Software Foundation),
+renamed, so Windows lets it run. Something not working? Run `PSVR Screen.exe -m psvrscreen --check`: it writes
+`%LOCALAPPDATA%\PSVRScreen\selfcheck.txt` with what loads and what doesn't.
 
 ## Running from source
 
@@ -48,7 +62,7 @@ python -m venv .venv
 ```
 
 Without a headset: set `PSVR_SIMULATOR=1` (the two-lens picture in a window). How the code is organised:
-[ARCHITECTURE.md](ARCHITECTURE.md). Building the .exe and the installer: see `packaging/`.
+[ARCHITECTURE.md](ARCHITECTURE.md). Building the download: `.venv\Scripts\python toolsuild_portable.py`.
 
 ## License
 

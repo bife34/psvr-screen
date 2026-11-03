@@ -98,6 +98,8 @@ def _detail(a, k=5):
 def _same_picture(a, b):
     """How much two halves show the same details (-1..1): only their middle (the edges often hold mirrored
     lens masks), allowing a small sideways shift (each eye sees things a little shifted)."""
+    if min(a.shape) < 24 or a.shape != b.shape:     # (too small to tell)
+        return 0.0
     n = max(1, min(a.shape) // 96)
     a, b = _detail(_blocks(a, n)), _detail(_blocks(b, n))
     w = a.shape[1]

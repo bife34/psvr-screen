@@ -2,15 +2,25 @@
 
 Subclasses say what to show: `state()` returns everything the picture depends on, `build()` returns the
 widget tree for it. When the state, the hovered or the pressed widget changes, the view is rebuilt and
-redrawn into its texture (on the render thread) - otherwise nothing is drawn at all.
+redrawn into its texture - otherwise nothing is drawn at all. Small views draw on the render thread; a view
+whose drawing takes long (a native app's page full of pictures: ~130 ms) draws in the background while the
+headset keeps showing its last picture, so the VR never stops for it (that froze head movement and everything).
 
 The view receives pointer events (it is a surface's `target`) and passes them to its widgets.
 """
+import copy
+import threading
+import time
+
+import numpy as np
 from PIL import Image, ImageDraw
 
 from ..core import geometry
 from ..render.gl import Texture
 from . import theme
+
+
+SLOW_DRAW_SECONDS = 0.012   # a view that took longer than this to draw draws in the background from then on
 
 
 def meters_per_px(distance):
@@ -43,6 +53,9 @@ class View:
         self.root = None
         self.size_px = (1, 1)
         self._drawn_key = None
+        self._v_slow = False          # its last drawing took long: draw in the background
+        self._v_job = None            # (key) being drawn in the background
+        self._v_done = None           # (key, root, size, image) ready to show
 
     # -- for subclasses ---------------------------------------------------------------------------
     def state(self):
@@ -68,23 +81,64 @@ class View:
 
     def refresh(self):
         """Redraw if needed. Render thread only (uploads the texture)."""
+        self._v_released = False
+        if self._v_done is not None:                 # a background drawing finished: show it
+            key, root, size, img = self._v_done
+            self._v_done = None
+            self._put_drawing(key, root, size, img)
         key = (self.state(), self.ctx.hover, self.ctx.press)   # (scaling it needs no redraw)
         if key == self._drawn_key and self.texture is not None:
             return
-        self._drawn_key = key
-        self.root = self.build()
-        w, h = (max(1, int(v)) for v in self.root.measure())
-        self.root.layout(0, 0, w, h)
-        self.size_px = self.ctx.size = (w, h)
+        if self._v_slow and self.texture is not None:
+            if self._v_job is None:
+                self._v_job = key
+                ctx = copy.copy(self.ctx)
+                threading.Thread(target=self._draw_behind, args=(key, ctx), daemon=True, name="view-draw").start()
+            return
+        t = time.perf_counter()
+        root, size, img = self._view_draw(self.ctx)
+        self._v_slow = time.perf_counter() - t > SLOW_DRAW_SECONDS
+        self._put_drawing(key, root, size, img)
+
+    def _view_draw(self, ctx):
+        root = self.build()
+        w, h = (max(1, int(v)) for v in root.measure())
+        root.layout(0, 0, w, h)
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        self.ctx.canvas = img
-        self.root.draw(ImageDraw.Draw(img), self.ctx)
-        self.ctx.canvas = None
+        ctx.size = (w, h)
+        ctx.canvas = img
+        try:
+            root.draw(ImageDraw.Draw(img), ctx)
+        finally:
+            ctx.canvas = None
+        return root, (w, h), img
+
+    def _draw_behind(self, key, ctx):
+        try:
+            t = time.perf_counter()
+            root, size, img = self._view_draw(ctx)
+            self._v_slow = time.perf_counter() - t > SLOW_DRAW_SECONDS
+            pixels = np.asarray(img, np.uint8)     # (the conversion for the GPU too: ~12 ms for a big page)
+            if not getattr(self, "_v_released", False):
+                self._v_done = (key, root, size, pixels)
+        except Exception:
+            from ..core.log import log_error
+            log_error(f"draw {type(self).__name__}")
+            self._drawn_key = key                  # (don't retry the same picture every frame)
+        finally:
+            self._v_job = None
+
+    def _put_drawing(self, key, root, size, img):
+        self._drawn_key = key
+        self.root = root
+        self.size_px = self.ctx.size = size
         if self.texture is None:
             self.texture = Texture()
         self.texture.upload(img)
 
     def release(self):
+        self._v_done = None                          # (a background drawing finishing later is dropped too)
+        self._v_released = True
         if self.texture is not None:
             self.texture.delete()
             self.texture = None

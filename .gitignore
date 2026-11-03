@@ -18,3 +18,6 @@ packaging/icon_preview.png
 
 # Locked rooms (encrypted, personal)
 /rooms/
+
+# the self-check report (PSVR Screen.exe --check)
+selfcheck.txt

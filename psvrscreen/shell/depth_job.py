@@ -27,11 +27,12 @@ class DepthJob:
         r, self._ready = self._ready, None
         return r
 
-    def photo(self, path, bgra, private):
-        """A photo's depth (once per photo)."""
-        if self._photo_key == path or self._busy:
+    def photo(self, path, bgra, private, turns=0):
+        """A photo's depth (once per photo, and per way it's turned)."""
+        key = (path, turns)
+        if self._photo_key == key or self._busy:
             return
-        self._photo_key, self._busy, self.state = path, True, "working"
+        self._photo_key, self._busy, self.state = key, True, "working"
 
         def work():
             try:
@@ -42,7 +43,7 @@ class DepthJob:
                 k = min(1.0, PHOTO_INPUT / max(h, w))
                 rgb = cv2.cvtColor(cv2.resize(bgra, (max(1, round(w * k)), max(1, round(h * k))),
                                               interpolation=cv2.INTER_AREA), cv2.COLOR_BGRA2RGB)
-                self._ready = ai_depth.of_picture(path, rgb, private)
+                self._ready = ai_depth.of_picture(path, rgb, private, f"t{turns}|" if turns else "")
                 self.state = ""
             except Exception:
                 log_error("photo depth")

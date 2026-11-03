@@ -4,6 +4,7 @@ Opens in front of you like a dialog; picking something closes it.
 """
 import time
 
+from ..win import integrated
 from ..ui import theme
 from ..ui.theme import Icon
 from ..ui.view import View
@@ -51,6 +52,12 @@ class Home(View):
                       w=TILE, h=TILE, subtitle=subtitle)
                  for key, name, icon, color, subtitle in TILES
                  if windows_apps or key not in WINDOWS_TILES]
+        # Windows programs that work in VR (win/integrated.py), when they're on this PC: before Settings
+        for key, app in integrated.APPS.items():
+            if integrated.installed(key):
+                tiles.insert(len(tiles) - 1, Tile("tile:" + key, app["name"], app["icon"], app["color"],
+                                                  on_click=lambda key=key: shell.home_action(key), w=TILE, h=TILE,
+                                                  subtitle=app["subtitle"]))
         rows = [header]
         watching = shell.continue_watching()[:CONTINUE_SHOWN]
         if watching:

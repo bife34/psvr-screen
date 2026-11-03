@@ -19,6 +19,7 @@ class WindowCapture:
     def __init__(self, hwnd):
         self.hwnd = hwnd
         self.closed = False          # the window was closed
+        self.failed = False          # Windows wouldn't capture it (yet): see DesktopContent
         self._seq = 0
         self._frame = None
         self._lock = threading.Lock()
@@ -42,7 +43,12 @@ class WindowCapture:
         def on_closed():
             self.closed = True
 
-        self._control = capture.start_free_threaded()
+        try:
+            self._control = capture.start_free_threaded()
+        except Exception as e:      # ("parameter incorrect": minimized / not shown yet / a protected window)
+            self._control, self.failed = None, True
+            from ..core.log import log_note
+            log_note(f"[capture] window {hwnd} can't be captured now: {str(e)[:100]}")
 
     def latest(self):
         with self._lock:
@@ -51,7 +57,8 @@ class WindowCapture:
     def stop(self):
         self.closed = True
         try:
-            self._control.stop()
+            if self._control is not None:
+                self._control.stop()
         except Exception:
             pass
 

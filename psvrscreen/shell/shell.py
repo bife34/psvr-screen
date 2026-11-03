@@ -24,7 +24,7 @@ from ..core.settings import new_panel, shown_title
 from ..scene.surface import BLACK, INTERFACE, OVERLAY, Surface
 from ..ui.theme import Icon
 from ..video import files
-from ..win import displays, start_apps, steamvr, windows
+from ..win import displays, integrated, start_apps, steamvr, windows
 from ..win.media import MediaWatcher
 from . import workspace
 from .chrome import BAR_IMAGE_WIDTH, SettingsCard, TitleBar
@@ -35,7 +35,7 @@ from .motion import Motion
 from .pointer import Pointer
 from . import assistant, file_ops, voice_commands
 from .photo_wall import PhotoWall
-from .rooms import Keypad, RecoveryKey, Rooms
+from .rooms import Keypad, RecoveryKey, RoomDesigner, Rooms
 from .timeline import TimelineRibbon
 from .toast import ToastView
 from .vr_video import ImmersiveVideo, VideoDetector, WatchButton, is_browser_video
@@ -255,6 +255,7 @@ class Shell:
         self.game_windows = set()                # hwnds of games in VR (read by the controller threads)
         self._enter_game = False                 # a click on a game: the controls go to it after the click
         self._opened_file = None                 # a video file's VideoInfo, ready to play (from a thread)
+        self._awaiting = None                    # (program key, when): a Windows program opened from Home
 
     # -- lifetime --------------------------------------------------------------------------------
     def start(self):
@@ -312,6 +313,10 @@ class Shell:
 
     def _surfaces(self, now):
         self._settings = s = self.store.get()
+        if self.gesture is not None and not self.pointer.pressing:
+            # a move / bend belongs to a press: without one it's left over (its release went elsewhere) and
+            # would move that window with every scroll or drag on any window
+            self.gesture = None
         self._sync_windows(s)
         self.game_windows = {getattr(self.windows[p["id"]].content, "hwnd", None)
                              for p in s.panels if p.get("game") and p["id"] in self.windows}
@@ -689,10 +694,33 @@ class Shell:
         self._close_dialog()
         if key in apps.NATIVE_APPS:
             self.open_native(key)
+        elif key in integrated.APPS:
+            self.open_integrated(key)
         elif key == "settings":
             self.dock_action("global_settings")
         else:
             self.dock_action(key)                  # apps, add_window
+
+    def open_integrated(self, key):
+        """A Windows program that works in VR (win/integrated.py, e.g. Spotify): its window if it's open (already
+        in VR: shown), else it's started - or brought back from the tray - and its window comes into VR."""
+        app = integrated.APPS[key]
+        shown = next((p for p in self._settings.panels if (p.get("exe") or "").lower() == app["exe"]), None)
+        if shown is not None:
+            self.show_window(shown["id"])
+            return
+        found = integrated.main_window(key)
+        if found is not None:
+            hwnd, title, exe = found
+            workspace.add_window(self.store, new_panel_for(hwnd, title, exe), self.look_yaw)
+            return
+        self._awaiting = (key, time.monotonic())
+        self.toast(f"Opening {app['name']}...")
+        try:
+            integrated.launch(key)
+        except OSError:
+            self._awaiting = None
+            self.toast(f"{app['name']} isn't installed on this PC")
 
     def _open_dialog(self, kind, make):
         opening = getattr(self.dialog, "kind", None) != kind
@@ -714,6 +742,7 @@ class Shell:
         rooms, s = self.rooms, self._settings
         items = [(("● " if r["id"] == s.current_room and not rooms.secret else "") + r["name"], Icon.HOME,
                   lambda rid=r["id"]: rooms.go(rid), "flat") for r in s.rooms]
+        items.append(("Design this room", Icon.SETTINGS, self.design_room, "flat"))
         items.append(("New room", Icon.ADD, rooms.new_room, "flat"))
         items.append(("New locked room", Icon.LOCKED, lambda: self.open_keypad("new"), "flat"))
         if rooms.secret:
@@ -721,6 +750,10 @@ class Shell:
         elif s.current_room != "home":
             items.append(("Delete this room", Icon.CLOSE, lambda: rooms.delete_room(s.current_room), "danger"))
         self.open_menu("Rooms", items)
+
+    def design_room(self):
+        """The room designer: this room's name, surroundings and how its windows stand."""
+        self._open_dialog(RoomDesigner, lambda: RoomDesigner(self))
 
     def open_keypad(self, mode, message=""):
         """The PIN pad: "unlock" (any locked room), "new" (make a locked room: PIN twice, then its recovery key)."""
@@ -781,6 +814,54 @@ class Shell:
         title = apps.NATIVE_APPS[name][0]
         workspace.add_window(self.store, new_panel("app:" + name, title, width=2.2, distance=2.0, height=0.1),
                              self.look_yaw)
+
+    def use_as_surroundings(self, path):
+        """A picture becomes the room around you (this room's Surroundings): a 360° picture as it is, a normal
+        photo in front of you with the rest of the sphere filled from its own colors (video/room_maker.py)."""
+        if files.in_vault(path):
+            # the surroundings file isn't encrypted: a picture from the safe would leave it readable on disk
+            self.toast("Pictures in the safe can't be surroundings - take it out first")
+            return
+        self.toast("Making your surroundings...")
+
+        def work():
+            from ..video import room_maker
+            try:
+                name = room_maker.make(path)
+            except Exception:
+                log_error("use as surroundings")
+                self.later(lambda: self.toast("That picture couldn't be used"))
+                return
+            self.later(lambda: (self.store.update(environment=name, environment_turn=0.0),
+                                self.toast("Your picture is the room now")))
+
+        threading.Thread(target=work, daemon=True, name="make-surroundings").start()
+
+    def pick_surroundings(self):
+        """Surroundings' "Your picture" card: Photos opens; right click a picture > Use as surroundings."""
+        self.close_dialog()
+        self.open_native("photos")
+        self.toast("Right click a picture > Use as surroundings")
+
+    def forget_surroundings(self, name):
+        """One of your own surroundings, gone (the dark room if it was on)."""
+        from ..render import environment
+        path = environment.path_of(name)
+        if path is None or environment.MINE not in path.parents:
+            return
+        try:
+            path.unlink()
+        except OSError:
+            log_error("remove surroundings")
+            return
+        environment.forget_preview(name)
+        now = self.store.get()
+        rooms = [dict(r, environment="") if r.get("environment") == name else r for r in now.rooms]
+        changes = {"rooms": rooms}
+        if now.environment == name:
+            changes["environment"] = ""
+        self.store.update(**changes)
+        self.toast("Removed")
 
     def watch_photo(self, path, album=()):
         self._close_dialog()
@@ -1067,7 +1148,8 @@ class Shell:
 
     def photo_menu(self, path, open_it, recent):
         items = [("Open", Icon.PHOTO, open_it, "flat"),
-                 ("View around me", Icon.SPHERE, lambda: self.watch_photo(path), "flat")]
+                 ("View around me", Icon.SPHERE, lambda: self.watch_photo(path), "flat"),
+                 ("Use as surroundings", Icon.GALLERY, lambda: self.use_as_surroundings(path), "flat")]
         if recent:
             items.append(("Remove from Recent", Icon.CLOSE, lambda: self.forget_recent(path), "flat"))
         items.append(("Show in its folder (on the PC)", Icon.FOLDER, lambda: files.show_in_folder(path), "flat"))
@@ -1276,6 +1358,7 @@ class Shell:
             items.append(("Open", Icon.FILE, lambda: self.open_file(path), "flat"))
         if path.suffix.lower() in files.PICTURE_EXTENSIONS:
             items.append(("Around me", Icon.SPHERE, lambda: self.watch_photo(path), "flat"))
+            items.append(("Surroundings", Icon.GALLERY, lambda: self.use_as_surroundings(path), "flat"))
         if safe:
             items.append(("Take out", Icon.FOLDER, lambda: self._take_out(path), "flat"))
         else:
@@ -1428,6 +1511,13 @@ class Shell:
                 title, exe = current[hwnd]
                 # A game being started: only its own window comes in by itself (not Steam or anything else)
                 if self._game is not None and self._game_window_appeared(hwnd, title, exe):
+                    continue
+                # A program that works in VR, opened from Home: its window comes in (whatever the setting says)
+                awaiting = self._awaiting
+                if (awaiting and integrated.owns(exe) == awaiting[0]
+                        and now - awaiting[1] < LAUNCHED_FROM_VR_SECONDS):
+                    self._awaiting = None
+                    workspace.add_window(self.store, new_panel_for(hwnd, title, exe), self.look_yaw)
                     continue
                 if hwnd in on_vr and not (launched or clicked):
                     windows.to_main(hwnd)
